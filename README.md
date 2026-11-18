@@ -1,15 +1,19 @@
-# CC: Tweaked for Horizon — slice 1 (SDK format)
+# CC: Tweaked — a Horizon port
 
-The **Computer** block of CC: Tweaked 1.121.0 on Horizon, with a terminal that
-runs a program: place it, load a chunk with `/computercraft load`, and read the
-result with `/computercraft screen`.
+**CC: Tweaked** is a Minecraft mod. Just another ComputerCraft fork. This repository is a **port of it to [Horizon](https://github.com/horizon-rust/horizon)**, the Rust engine for Minecraft Java 26.3. It carries the complete source of the port plus the content files it ships, and installs as a single `.hmod` package.
 
-One flat `.hmod` (mod API `0.2`), built by the launcher against Horizon
-`0b14f8acfd97fa2c750e42795249dcc981178ca4` / mixins
-`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`. It supersedes the retired `.hnmod`
-of PR #788.
+Upstream: [cc-tweaked/CC-Tweaked](https://github.com/cc-tweaked/CC-Tweaked) — licence **CCPL-1.0**.
 
-## What this slice implements
+| | |
+|---|---|
+| Upstream mod | CC: Tweaked ([source](https://github.com/cc-tweaked/CC-Tweaked)) |
+| Ported to | Horizon 0b14f8a, Minecraft Java 26.3, mod API `0.2` |
+| Package | `computercraft.hmod` (install it with the Horizon launcher) |
+| Licence | **CCPL-1.0** — the upstream mod's licence; see [Licence and credit](#licence-and-credit) |
+
+## What this port implements
+
+### What this slice implements
 
 - `computercraft:computer_normal` — `facing` × `state` (off/on/blinking) on the
   stone template, upstream's blockstate model chain (`minecraft:block/orientable`
@@ -24,51 +28,46 @@ of PR #788.
   block's front face with the font atlas; `/computercraft screen` returns it as
   one line of JSON for machines.
 
-## Layout (SDK format)
+## Not yet ported
+
+- **The ROM**: 105 Lua files (`bios.lua`, 20 `rom/apis`, 23 `rom/modules`, 60
+- **Language features**: tables, functions and closures, `break`, `repeat`,
+- **Peripherals and the world**: wired/wireless modems and `rednet`, monitors,
+- **Block behaviour**: `computer_advanced`, `computer_command`, the other 15
+- **A `BlockState`'s property read**: the pin reads a *position's* property and
+- **Placement**: the facing rule is unit-tested (`facing_for_placement`) and
+- **The in-game legs**: `tools/e2e.sh` and `tools/visual.sh` are rewritten for
+
+## Installing
+
+1. Install the [Horizon launcher](https://github.com/horizon-rust/horizon/releases) (0.2.70 or newer).
+2. Add `computercraft.hmod` to the instance's mods.
+3. The package is pinned to a specific Horizon build; the launcher checks that pin.
+
+## Licence and credit
+
+CC: Tweaked was created by its upstream authors; the code, models and assets in the original mod
+remain theirs and are used here under **CCPL-1.0**. The Rust in this repository is a clean-room
+rewrite for Horizon, not a translation of the original source.
+
+- `LICENSE` — the upstream licence text.
+- `LICENSE-NOTICE.md` — what this port carries and where it came from.
+- The upstream project: https://github.com/cc-tweaked/CC-Tweaked
+
+## Technical details
 
 ```
-horizon-mod.toml   id, version 0.2.0, api = "0.2", [native] pins
-Cargo.toml         the port's own crate; horizon-mod-api from .horizon/sdk/
-src/lib.rs         the one impl Hooks + the computer's BlockEntityPart
-src/runtime.rs     the pure Lua subset and terminal (byte-identical to 0.1.0)
-src/commands.rs    the command surface and the JSON readout (pure, tested)
-src/screen.rs      the drawn terminal's geometry (pure, tested)
-assets/, data/     the carried content
-LICENSE, LICENSE-NOTICE.md   the CCPL text and where every notice was read
+horizon-mod.toml   package manifest (id, version, api, [native] pin)
+Cargo.toml         the crate; depends on `horizon-mod-api` from the fetched SDK
+src/               lib.rs (the one `impl Hooks`), runtime.rs (pure logic + tests), glue
+assets/ data/      the content the package ships
+tools/             content generators and the e2e scenario
 ```
 
-## What it does not implement (see `notes.md`)
+- Build: `cargo horizon-mod build` (packages; it does not compile against the game).
+- Test: `cargo test`, `cargo clippy --all-targets -- -D warnings`.
+- In-game: `ports/tools/launcher-game.sh run computercraft` in the campaign tree, or install the
+  `.hmod` and play; the harness scenario is `tools/e2e.sh`.
 
-The ROM (105 Lua files), the shell, tables, functions, coroutines, `require`,
-peripherals, modems/rednet, monitors, disk drives, printers, speakers, turtles,
-pocket computers, the GUI, and the remaining 15 blockstates.
-
-## Commands
-
-```
-/computercraft load <x> <y> <z> <program>   load a chunk and boot it
-/computercraft run <x> <y> <z>              run the loaded chunk again
-/computercraft screen <x> <y> <z>           one line of JSON: the terminal
-/computercraft power <x> <y> <z> on|off     power the computer down/up
-```
-
-## Building and verifying
-
-```sh
-cargo test --offline                     # 49 tests, no game needed
-cargo horizon-mod build                  # -> target/horizon-mod/computercraft.hmod
-cargo horizon-mod check computercraft.hmod
-cargo horizon-mod fits computercraft.hmod
-```
-
-The in-game legs (`tools/e2e.sh`, `tools/visual.sh`) need a game the launcher
-built with this package: `horizon-launcher native-build . --instance <instance>
---trust-native-code`, then `GAME=<that horizon-client> tools/e2e.sh`.
-
-## Licence
-
-CC: Tweaked is under the **ComputerCraft Public License 1.0.0** (`LICENSE`);
-this port is a derivative under the same licence. `LICENSE-NOTICE.md` records
-where each notice was read and how the "complete source, same licence"
-obligation is met. Both files are inside the package. Builds, evidence and the
-gap list: `notes.md` and `VALIDATION.md`.
+This repository is generated from the campaign's port at `ports/computercraft/`; the port's own
+`notes.md` is the full record (decisions, traps, evidence).
