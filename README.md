@@ -1,0 +1,74 @@
+# CC: Tweaked for Horizon — slice 1 (SDK format)
+
+The **Computer** block of CC: Tweaked 1.121.0 on Horizon, with a terminal that
+runs a program: place it, load a chunk with `/computercraft load`, and read the
+result with `/computercraft screen`.
+
+One flat `.hmod` (mod API `0.2`), built by the launcher against Horizon
+`0b14f8acfd97fa2c750e42795249dcc981178ca4` / mixins
+`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`. It supersedes the retired `.hnmod`
+of PR #788.
+
+## What this slice implements
+
+- `computercraft:computer_normal` — `facing` × `state` (off/on/blinking) on the
+  stone template, upstream's blockstate model chain (`minecraft:block/orientable`
+  with the computer's own front/side/top textures, the lit screen texture while
+  running), a block entity declared in code, self-drop loot, the upstream
+  crafting shape with 26.3 ingredients, and a creative tab.
+- A **Lua 5.2 subset** interpreter (`src/runtime.rs`): `print`, numbers, strings,
+  `..`, `+ - * / % ^`, comparisons, `and`/`or`/`not`, `#`, `local`, assignment,
+  `if`/`elseif`/`else`, `while`, numeric `for`, comments, `return`, blocks and
+  scopes — 31 unit tests.
+- The terminal is kept in the block entity's saved compound and drawn on the
+  block's front face with the font atlas; `/computercraft screen` returns it as
+  one line of JSON for machines.
+
+## Layout (SDK format)
+
+```
+horizon-mod.toml   id, version 0.2.0, api = "0.2", [native] pins
+Cargo.toml         the port's own crate; horizon-mod-api from .horizon/sdk/
+src/lib.rs         the one impl Hooks + the computer's BlockEntityPart
+src/runtime.rs     the pure Lua subset and terminal (byte-identical to 0.1.0)
+src/commands.rs    the command surface and the JSON readout (pure, tested)
+src/screen.rs      the drawn terminal's geometry (pure, tested)
+assets/, data/     the carried content
+LICENSE, LICENSE-NOTICE.md   the CCPL text and where every notice was read
+```
+
+## What it does not implement (see `notes.md`)
+
+The ROM (105 Lua files), the shell, tables, functions, coroutines, `require`,
+peripherals, modems/rednet, monitors, disk drives, printers, speakers, turtles,
+pocket computers, the GUI, and the remaining 15 blockstates.
+
+## Commands
+
+```
+/computercraft load <x> <y> <z> <program>   load a chunk and boot it
+/computercraft run <x> <y> <z>              run the loaded chunk again
+/computercraft screen <x> <y> <z>           one line of JSON: the terminal
+/computercraft power <x> <y> <z> on|off     power the computer down/up
+```
+
+## Building and verifying
+
+```sh
+cargo test --offline                     # 49 tests, no game needed
+cargo horizon-mod build                  # -> target/horizon-mod/computercraft.hmod
+cargo horizon-mod check computercraft.hmod
+cargo horizon-mod fits computercraft.hmod
+```
+
+The in-game legs (`tools/e2e.sh`, `tools/visual.sh`) need a game the launcher
+built with this package: `horizon-launcher native-build . --instance <instance>
+--trust-native-code`, then `GAME=<that horizon-client> tools/e2e.sh`.
+
+## Licence
+
+CC: Tweaked is under the **ComputerCraft Public License 1.0.0** (`LICENSE`);
+this port is a derivative under the same licence. `LICENSE-NOTICE.md` records
+where each notice was read and how the "complete source, same licence"
+obligation is met. Both files are inside the package. Builds, evidence and the
+gap list: `notes.md` and `VALIDATION.md`.
