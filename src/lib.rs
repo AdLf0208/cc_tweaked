@@ -12,13 +12,15 @@
 //! `notes.md` §"Migration to the SDK format".
 use mod_api::{
     BlockEntityEvent, BlockEntityPart, BlockEntitySubmitEvent, BlockEntityTickEvent,
-    BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart, BlockState, ClientHost, Command,
-    CommandArgumentValue, Compound, Flow, Hooks, LevelHost, LevelSide, Registrar,
-    RegistrationContext, RunModCommandEvent, ServerHost, StateForPlacementEvent, Tag, Text,
+    BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart, BlockState, Capability,
+    ClientHost, Command, CommandArgumentValue, Compound, Direction, Flow, Hooks, LevelHost,
+    LevelRef, LevelSide, Registrar, RegistrationContext, RunModCommandEvent, ServerHost,
+    StateForPlacementEvent, Tag, Text,
 };
 
 pub mod commands;
 pub mod family;
+pub mod peripheral;
 pub mod runtime;
 pub mod screen;
 
@@ -163,15 +165,31 @@ impl BlockEntityPart for ComputerPart {
         event.ticks = true;
     }
 
-    /// One server tick: a powered computer that has not run its program yet runs it now,
-    /// keeps the terminal, lights `state=on` and pushes both to clients.
+    /// One server tick: a powered computer that has not run its program yet runs it now —
+    /// with its neighbours answering `peripheral.*` — keeps the terminal, lights `state=on` and
+    /// pushes both to clients.
     fn block_entity_tick(&self, host: &mut dyn ServerHost, event: &mut BlockEntityTickEvent<'_>) {
         let mut computer = Computer::read(&event.entity.nbt);
         if !computer.powered || computer.running {
             return;
         }
         let mut terminal = runtime::Terminal::new(runtime::TERM_WIDTH, runtime::TERM_LINES);
-        if let Err(error) = runtime::run(&computer.program, &mut terminal) {
+        let outcome = match in_place_level(host) {
+            Some(level) => {
+                let facing = facing_at(host, level, event.pos);
+                let mut world = Lookup {
+                    host: &mut *host,
+                    level,
+                    pos: event.pos,
+                    facing,
+                };
+                runtime::run_with(&computer.program, &mut terminal, &mut world)
+            }
+            // The level is not in place (a parked level): the program still runs, and every side
+            // then reaches no peripheral, which is what the lookup answers without a level.
+            None => runtime::run(&computer.program, &mut terminal),
+        };
+        if let Err(error) = outcome {
             terminal.write_line(&format!("error: {error}"));
         }
         computer.buffer = terminal.lines().to_vec();
@@ -235,8 +253,8 @@ struct Mod;
 
 #[mod_api::horizon_mod]
 impl Hooks for Mod {
-    /// Once, at startup: declare the computers' block entity type over the whole family and
-    /// attach the Part to it.
+    /// Once, at startup: declare the computers' block entity type over the whole family, attach the
+    /// Part to it, and let the probe block answer the peripheral key.
     fn register(&self, r: &mut dyn Registrar, _context: &RegistrationContext) {
         let kind = r
             .block_entity_type("computer")
@@ -244,6 +262,12 @@ impl Hooks for Mod {
             .build();
         r.block_entity_part(&kind, ComputerPart)
             .expect("computercraft: the computer Part attaches to the type declared beside it");
+        let harness = r.block_key(peripheral::HARNESS_BLOCK);
+        r.block_capability(
+            &peripheral::PERIPHERAL,
+            &harness,
+            |_host, _at, _state, _entity| Some(Box::new(peripheral::Harness)),
+        );
     }
 
     /// The four usages. `load`'s program is its last, greedy argument, so it can hold spaces
@@ -347,6 +371,12 @@ fn act(
             computer.running = false;
             "Running again.".to_owned()
         }
+        commands::Action::RunProgram { program } => {
+            computer.program.clone_from(program);
+            computer.buffer.clear();
+            computer.running = false;
+            "Program loaded and running; the terminal updates on the next tick.".to_owned()
+        }
         commands::Action::Power { on } => {
             computer.powered = *on;
             computer.buffer.clear();
@@ -389,4 +419,90 @@ fn computer_at(
     }
     let entity = host.block_entity(level, at)?;
     Some((id, entity))
+}
+
+// ---------------------------------------------------------------------------
+// The peripheral lookup a running program performs
+// ---------------------------------------------------------------------------
+
+/// The level a computer is in, for a tick that is given no level: the one `in_place` names (the
+/// levels the game is acting on, after parked ones), the same helper `bigreactors` and
+/// `pneumaticcraft` use. A tick fires for one level, so the first level in place is that one.
+fn in_place_level(host: &dyn ServerHost) -> Option<LevelRef> {
+    host.levels()
+        .list_levels()
+        .into_iter()
+        .find(|level| level.in_place(host))
+}
+
+/// The `facing` of the computer at `pos`, read from its block state: the API reads a *position's*
+/// property, and this glue has the state string (`screen::facing_of` is the tested parser).
+fn facing_at(host: &dyn ServerHost, level: LevelRef, pos: [i32; 3]) -> String {
+    level
+        .block_state(host, pos)
+        .and_then(|state| host.block_state_string(state))
+        .as_deref()
+        .and_then(screen::facing_of)
+        .unwrap_or("north")
+        .to_owned()
+}
+
+/// The [`Direction`] a normal is, for the capability lookup's `side`.
+fn direction_of(normal: [i32; 3]) -> Option<Direction> {
+    Direction::ALL
+        .into_iter()
+        .find(|direction| direction.normal() == normal)
+}
+
+/// The world a running program sees: the six blocks beside the computer, asked for
+/// `computercraft:peripheral`.
+struct Lookup<'a> {
+    host: &'a mut dyn ServerHost,
+    level: LevelRef,
+    pos: [i32; 3],
+    facing: String,
+}
+
+impl Lookup<'_> {
+    /// The peripheral `side` reaches, asked through the face of it the computer touches (a
+    /// neighbour is reached from the side that looks back at us, as a pipe asks a tank).
+    fn peripheral(&mut self, side: &str) -> Option<Capability<dyn peripheral::Peripheral>> {
+        let (at, normal) = peripheral::neighbour(self.pos, &self.facing, side)?;
+        let direction = direction_of(normal)?;
+        self.level.capability(
+            &mut *self.host,
+            &peripheral::PERIPHERAL,
+            at,
+            Some(direction.opposite()),
+        )
+    }
+}
+
+impl runtime::World for Lookup<'_> {
+    fn peripheral_type(&mut self, side: &str) -> Option<String> {
+        self.peripheral(side).map(|found| found.peripheral_type())
+    }
+
+    fn peripheral_methods(&mut self, side: &str) -> Option<Vec<String>> {
+        self.peripheral(side).map(|found| found.methods())
+    }
+
+    fn peripheral_call(
+        &mut self,
+        side: &str,
+        method: &str,
+        arguments: &[runtime::LuaValue],
+    ) -> Result<runtime::LuaValue, String> {
+        let Some(found) = self.peripheral(side) else {
+            return Ok(runtime::LuaValue::Nil);
+        };
+        found
+            .call(&mut *self.host, method, arguments)
+            .unwrap_or_else(|| {
+                Err(format!(
+                    "attempt to call a nil value (method '{method}' of {})",
+                    found.peripheral_type()
+                ))
+            })
+    }
 }

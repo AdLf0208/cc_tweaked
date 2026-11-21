@@ -7,14 +7,18 @@ name = "CC: Tweaked"
 # 0.2.0 was the SDK-format migration (superseding the retired `.hnmod` 0.1.0, PR #788, closed
 # because Horizon retired `.hnmod`); 0.2.1 was the registry review's fixes and 0.2.2 is the
 # computer block family. The registry entry, the file name and the release must agree.
-version = "0.2.2"
+version = "0.2.3"
 description = """A port of CC: Tweaked for Horizon: the three computer blocks (Computer, Advanced Computer
-and Command Computer) and the terminal each draws on its front face. A computer's block entity keeps
-a program and a 16-column, 10-row terminal in its saved data, boots the program once when it is
-powered, and answers four server commands (`/computercraft load|run|screen|power`) that load a
-program, run it again, read the terminal back as one JSON line naming the block it read, and switch
-the computer on or off. The program language is a documented Lua 5.2 subset (no tables, functions or
-coroutines yet); the ROM, peripherals, turtles and the other thirteen block types are recorded gaps."""
+and Command Computer), the terminal each draws on its front face, and the peripheral surface a
+running program reaches the world through. A computer's block entity keeps a program and a
+16-column, 10-row terminal in its saved data, boots the program once when it is powered, and runs it
+in a documented Lua 5.2 subset; a program asks the six blocks beside its computer through
+peripheral.getType, peripheral.getNames and peripheral.call over this package's own
+computercraft:peripheral capability, and five server commands (/computercraft load|run|screen|power)
+load or re-run a program, read the terminal back as one JSON line naming the block it read, and
+switch the computer on or off. The probe block computercraft:peripheral_harness answers the key so
+the path is provable in game. The ROM, tables/functions/coroutines, monitors, modems, turtles, pocket
+computers and the jar's other twelve block types are recorded gaps."""
 authors = ["Daniel Ratcliffe", "Aaron Mills", "SquidDev", "AdLf0208"]
 # The upstream licence, read in full from the jar's manifest URL and carried verbatim as
 # LICENSE; LICENSE-NOTICE.md records where every notice was read. Copyleft-style, rank 1:

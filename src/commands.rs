@@ -16,6 +16,13 @@ pub enum Action {
     },
     /// `run <pos>`: run the stored program again.
     Run,
+    /// `run <pos> <program>`: run this program now, leaving it as the stored one (the firmware an
+    /// operator types by hand, where `load` is the same thing a player asked for explicitly).
+    RunProgram {
+        /// The program source, as typed (a chat line cannot hold a newline: separate
+        /// statements with `;`).
+        program: String,
+    },
     /// `screen <pos>`: report the terminal as one line of JSON.
     Screen,
     /// `power <pos> on|off`: switch the computer on or off.
@@ -50,13 +57,17 @@ pub const OPERATOR_LEVEL: u8 = 2;
 
 /// The four usages and the level each is registered at.
 #[must_use]
-pub fn usages() -> [(&'static str, u8); 4] {
+pub fn usages() -> [(&'static str, u8); 5] {
     [
         (
             "computercraft load <pos:block_pos> <program:text>",
             OPERATOR_LEVEL,
         ),
         ("computercraft run <pos:block_pos>", OPERATOR_LEVEL),
+        (
+            "computercraft run <pos:block_pos> <program:text>",
+            OPERATOR_LEVEL,
+        ),
         ("computercraft screen <pos:block_pos>", OPERATOR_LEVEL),
         (
             "computercraft power <pos:block_pos> <switch:word>",
@@ -78,7 +89,12 @@ pub fn asked(sub: &str, program: Option<&str>, switch: Option<&str>) -> Asked {
             }),
             _ => Asked::Refused(LOAD_USAGE),
         },
-        "run" => Asked::Do(Action::Run),
+        "run" => match program.map(str::trim) {
+            Some(source) if !source.is_empty() => Asked::Do(Action::RunProgram {
+                program: source.to_owned(),
+            }),
+            Some(_) | None => Asked::Do(Action::Run),
+        },
         "screen" => Asked::Do(Action::Screen),
         "power" => match switch {
             Some("on") => Asked::Do(Action::Power { on: true }),
@@ -190,6 +206,27 @@ mod tests {
     }
 
     #[test]
+    fn run_takes_a_program_and_keeps_it() {
+        // The operator spelling of "load and run": the program becomes the computer's stored one,
+        // so `/computercraft run` without it runs the same source again.
+        assert_eq!(
+            asked("run", Some("print(peripheral.getType('right'))"), None),
+            Asked::Do(Action::RunProgram {
+                program: "print(peripheral.getType('right'))".to_owned()
+            })
+        );
+        // Spaces around it are the chat line's, not the program's.
+        assert_eq!(
+            asked("run", Some("  print(1)  "), None),
+            Asked::Do(Action::RunProgram {
+                program: "print(1)".to_owned()
+            })
+        );
+        // An empty one is the program-less usage, not a program that prints nothing.
+        assert_eq!(asked("run", Some("   "), None), Asked::Do(Action::Run));
+    }
+
+    #[test]
     fn power_reads_on_and_off() {
         assert_eq!(
             asked("power", None, Some("on")),
@@ -223,11 +260,20 @@ mod tests {
         // handlers, so the gate is the registration level.
         assert_eq!(OPERATOR_LEVEL, 2);
         let usages = usages();
-        assert_eq!(usages.len(), 4);
+        assert_eq!(usages.len(), 5);
         for (usage, level) in usages {
             assert_eq!(level, OPERATOR_LEVEL, "{usage}");
             assert!(usage.starts_with("computercraft "), "{usage}");
         }
+        // The two `run` spellings share their literal: one re-runs the stored program, one takes
+        // a program. Both have to be registered or the program-taking spelling never parses.
+        assert_eq!(
+            usages
+                .iter()
+                .filter(|(usage, _)| usage.starts_with("computercraft run "))
+                .count(),
+            2
+        );
     }
 
     #[test]

@@ -1,9 +1,12 @@
-# CC: Tweaked for Horizon — slice 2: the computer block family
+# CC: Tweaked for Horizon — slice 3: the peripheral surface
 
 The **three computers** of CC: Tweaked 1.121.0 on Horizon — Computer, Advanced
 Computer and Command Computer — each with a terminal that runs a program: place
 one, load a chunk with `/computercraft load`, and read the result with
-`/computercraft screen`.
+`/computercraft screen`. A running program also **asks its neighbours**: the six
+blocks beside a computer answer the package's `computercraft:peripheral`
+capability, so `peripheral.call('right', 'getType')` reaches the block on the
+computer's right.
 
 One flat `.hmod` (mod API `0.2`), built by the launcher against Horizon
 `0a875da91dbb0fdcb7ba8c42c11341aa229af51a` / mixins
@@ -23,7 +26,17 @@ of PR #788.
 - A **Lua 5.2 subset** interpreter (`src/runtime.rs`): `print`, numbers, strings,
   `..`, `+ - * / % ^`, comparisons, `and`/`or`/`not`, `#`, `local`, assignment,
   `if`/`elseif`/`else`, `while`, numeric `for`, comments, `return`, blocks and
-  scopes — 31 unit tests.
+  scopes, **calls as expressions** (`print(peripheral.getType('right'))`) — 43
+  unit tests.
+- The **peripheral surface** (`src/peripheral.rs`): the `Peripheral` trait a
+  block answers (its type name, its method names, one call at a time), the
+  `computercraft:peripheral` `CapabilityKey`, and the six-side neighbour
+  geometry relative to a computer's facing. The interpreter's
+  `peripheral.getType` / `peripheral.getNames` / `peripheral.call` ask it through
+  a `World` the glue supplies, so a computer with no peripheral beside a side
+  answers `nil`. The package ships one probe block,
+  `computercraft:peripheral_harness`, that answers the key so the path can be
+  proved in game.
 - The terminal is kept in the block entity's saved compound and drawn on the
   block's front face with the font atlas; `/computercraft screen` returns it as
   one line of JSON naming the block it read, for machines.
@@ -31,10 +44,11 @@ of PR #788.
 ## Layout (SDK format)
 
 ```
-horizon-mod.toml   id, version 0.2.2, api = "0.2", [native] pins
+horizon-mod.toml   id, version 0.2.3, api = "0.2", [native] pins
 Cargo.toml         the port's own crate; horizon-mod-api from .horizon/sdk/
 src/lib.rs         the one impl Hooks + the family's BlockEntityPart
 src/family.rs      the three computers, by id and by registrar path (pure, tested)
+src/peripheral.rs  the side geometry, the Peripheral trait and its key, the probe block (pure, tested)
 src/runtime.rs     the pure Lua subset and terminal (byte-identical to 0.1.0)
 src/commands.rs    the command surface and the JSON readout (pure, tested)
 src/screen.rs      the drawn terminal's geometry (pure, tested)
@@ -45,15 +59,19 @@ LICENSE, LICENSE-NOTICE.md   the CCPL text and where every notice was read
 ## What it does not implement (see `notes.md`)
 
 The ROM (105 Lua files), the shell, tables, functions, coroutines, `require`,
-peripherals, modems/rednet, monitors, disk drives, printers, speakers, turtles,
-pocket computers, the GUI, the advanced computer's colour palette, the command
-computer's command API, and the jar's other thirteen block types.
+modems/rednet, monitors, disk drives, printers, speakers, turtles, pocket
+computers, `os.pullEvent` and an event queue, the GUI, the advanced computer's
+colour palette, the command computer's command API, and the jar's other twelve
+block types. A second crate can only answer `computercraft:peripheral` through a
+shared `[api]` crate publishing the trait (the pin refuses one capability name
+with two handler types), so that is a recorded gap for any add-on.
 
 ## Commands
 
 ```
 /computercraft load <x> <y> <z> <program>   load a chunk and boot it (any of the three)
 /computercraft run <x> <y> <z>              run the loaded chunk again
+/computercraft run <x> <y> <z> <program>    load this chunk and run it
 /computercraft screen <x> <y> <z>           one line of JSON: the block and the terminal
 /computercraft power <x> <y> <z> on|off     power the computer down/up
 ```
@@ -61,7 +79,7 @@ computer's command API, and the jar's other thirteen block types.
 ## Building and verifying
 
 ```sh
-cargo test --offline                     # 56 tests, no game needed
+cargo test --offline                     # 77 tests, no game needed
 cargo horizon-mod build                  # -> target/horizon-mod/computercraft.hmod
 cargo horizon-mod check computercraft.hmod
 cargo horizon-mod fits computercraft.hmod

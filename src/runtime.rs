@@ -129,15 +129,80 @@ impl LuaError {
     }
 }
 
+/// The two methods `peripheral.call` answers for every peripheral, whatever a peripheral's own
+/// method list names: upstream's `getType`/`getNames` are the wrapper's.
+pub const PERIPHERAL_BUILTIN: [&str; 2] = ["getType", "getNames"];
+
+/// What a program may reach outside itself: the peripherals of the blocks beside the computer.
+///
+/// The interpreter is pure — it has no world — so the glue answers these three questions for it,
+/// one call at a time. `side` is the name the program wrote (`"right"`); resolving it to a block
+/// and asking that block is the glue's job, not the interpreter's.
+pub trait World {
+    /// `peripheral.getType(side)`: the type name of the peripheral there, `None` when the side
+    /// reaches no peripheral.
+    fn peripheral_type(&mut self, side: &str) -> Option<String>;
+
+    /// `peripheral.getNames(side)`: the method names of the peripheral there, `None` when the side
+    /// reaches none.
+    fn peripheral_methods(&mut self, side: &str) -> Option<Vec<String>>;
+
+    /// `peripheral.call(side, method, …)`: one method call. `Ok(Nil)` when the side reaches no
+    /// peripheral (the subset has no `pcall`, so a program probes a side with a call that answers
+    /// nil rather than raising); `Err` is the message the program sees.
+    fn peripheral_call(
+        &mut self,
+        side: &str,
+        method: &str,
+        arguments: &[LuaValue],
+    ) -> Result<LuaValue, String>;
+}
+
+/// A world with no peripherals beside it: the interpreter's own tests, and a program running where
+/// its computer's level is not in place.
+pub struct NoPeripherals;
+
+impl World for NoPeripherals {
+    fn peripheral_type(&mut self, _side: &str) -> Option<String> {
+        None
+    }
+
+    fn peripheral_methods(&mut self, _side: &str) -> Option<Vec<String>> {
+        None
+    }
+
+    fn peripheral_call(
+        &mut self,
+        _side: &str,
+        _method: &str,
+        _arguments: &[LuaValue],
+    ) -> Result<LuaValue, String> {
+        Ok(LuaValue::Nil)
+    }
+}
+
 /// Runs `program`, writing what it prints into `terminal`.
 ///
 /// # Errors
 /// A syntax error in the chunk, or a runtime error the program raised.
 pub fn run(program: &str, terminal: &mut Terminal) -> Result<(), LuaError> {
+    run_with(program, terminal, &mut NoPeripherals)
+}
+
+/// Runs `program` with `world` answering its peripheral calls.
+///
+/// # Errors
+/// A syntax error in the chunk, or a runtime error the program raised.
+pub fn run_with(
+    program: &str,
+    terminal: &mut Terminal,
+    world: &mut dyn World,
+) -> Result<(), LuaError> {
     let tokens = lex(program)?;
     let chunk = Parser::new(tokens).parse_chunk()?;
     let mut machine = Machine {
         terminal,
+        world,
         scopes: vec![BTreeMap::new()],
         steps: 0,
         line: 1,
@@ -537,6 +602,13 @@ enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
     },
+    /// A call: `print(1)`, `peripheral.call('right', 'getType')`. The callee is a (possibly
+    /// dotted) name, not a value: the subset has no tables, so the only callables are the globals
+    /// this file implements.
+    Call {
+        callee: String,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -765,20 +837,18 @@ impl Parser {
         {
             return Err(self.error("break/repeat/function are not in this port's Lua subset"));
         }
-        let name = self.name()?;
+        let name = self.callee()?;
         if self.eat(Symbol::Assign) {
+            if name.contains('.') {
+                return Err(self.error(&format!(
+                    "cannot assign to '{name}': the subset has no tables"
+                )));
+            }
             let value = self.expression()?;
             return Ok(Stmt::Assign { name, value });
         }
         self.expect(Symbol::LParen)?;
-        let mut args = Vec::new();
-        if !self.check(Symbol::RParen) {
-            args.push(self.expression()?);
-            while self.eat(Symbol::Comma) {
-                args.push(self.expression()?);
-            }
-        }
-        self.expect(Symbol::RParen)?;
+        let args = self.call_arguments()?;
         Ok(Stmt::Call { name, args })
     }
 
@@ -812,6 +882,48 @@ impl Parser {
             }
             _ => Err(self.error(&format!("expected a name, found {}", self.describe()))),
         }
+    }
+
+    /// A name, or a dotted path of names (`peripheral.getType`): the subset has no tables, so an
+    /// indexed value is only ever a method of one of the interpreter's own namespaces.
+    fn callee(&mut self) -> Result<String, LuaError> {
+        let mut path = self.name()?;
+        while self.eat(Symbol::Dot) {
+            let field = self.name()?;
+            path.push('.');
+            path.push_str(&field);
+        }
+        Ok(path)
+    }
+
+    /// A name used as a value: `x`, or a call `print(x)` / `peripheral.call('right', 'getType')`.
+    /// The subset has no tables, so a dotted name is only ever called.
+    fn name_expression(&mut self) -> Result<Expr, LuaError> {
+        let callee = self.callee()?;
+        if !self.check(Symbol::LParen) {
+            if callee.contains('.') {
+                return Err(self.error(&format!(
+                    "cannot read '{callee}': the subset has no tables, so a method can only be called"
+                )));
+            }
+            return Ok(Expr::Name(callee));
+        }
+        self.advance();
+        let args = self.call_arguments()?;
+        Ok(Expr::Call { callee, args })
+    }
+
+    /// The `( … )` of a call, after its opening parenthesis.
+    fn call_arguments(&mut self) -> Result<Vec<Expr>, LuaError> {
+        let mut args = Vec::new();
+        if !self.check(Symbol::RParen) {
+            args.push(self.expression()?);
+            while self.eat(Symbol::Comma) {
+                args.push(self.expression()?);
+            }
+        }
+        self.expect(Symbol::RParen)?;
+        Ok(args)
     }
 
     fn expression(&mut self) -> Result<Expr, LuaError> {
@@ -892,10 +1004,7 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Str(text))
             }
-            Token::Name(name) => {
-                self.advance();
-                Ok(Expr::Name(name))
-            }
+            Token::Name(_) => self.name_expression(),
             Token::Symbol(Symbol::LParen) => {
                 self.advance();
                 let inner = self.expression()?;
@@ -910,12 +1019,16 @@ impl Parser {
 // ---------------------------------------------------------------- values
 
 #[derive(Debug, Clone, PartialEq)]
-enum Value {
+pub enum LuaValue {
     Nil,
     Bool(bool),
     Number(f64),
     Str(String),
 }
+
+/// The interpreter's own name for [`LuaValue`]; the values it works with are the public ones, so
+/// a peripheral takes and answers exactly what a program can hold.
+type Value = LuaValue;
 
 impl Value {
     fn truthy(&self) -> bool {
@@ -959,6 +1072,7 @@ fn format_number(value: f64) -> String {
 
 struct Machine<'a> {
     terminal: &'a mut Terminal,
+    world: &'a mut dyn World,
     scopes: Vec<BTreeMap<String, Value>>,
     steps: u32,
     line: usize,
@@ -1015,7 +1129,7 @@ impl Machine<'_> {
                 for argument in args {
                     values.push(self.evaluate(argument)?);
                 }
-                self.call(name, &values)?;
+                self.invoke(name, &values)?;
             }
             Stmt::If {
                 branches,
@@ -1108,30 +1222,96 @@ impl Machine<'_> {
         Value::Nil
     }
 
-    fn call(&mut self, name: &str, arguments: &[Value]) -> Result<(), LuaError> {
-        if name == "print" {
-            let line = arguments
-                .iter()
-                .map(Value::to_text)
-                .collect::<Vec<_>>()
-                .join("\t");
-            if line.len() > MAX_STRING_BYTES {
-                return Err(LuaError::runtime(
-                    self.line,
-                    format!("string is too long (the subset stops at {MAX_STRING_BYTES} bytes)"),
-                ));
+    /// Calls a global: `print`, or one of the three peripheral builtins, which the world answers.
+    /// The subset has no tables, so these globals are the only callables.
+    fn invoke(&mut self, callee: &str, arguments: &[Value]) -> Result<Value, LuaError> {
+        match callee {
+            "print" => {
+                let line = arguments
+                    .iter()
+                    .map(Value::to_text)
+                    .collect::<Vec<_>>()
+                    .join("\t");
+                if line.len() > MAX_STRING_BYTES {
+                    return Err(LuaError::runtime(
+                        self.line,
+                        format!(
+                            "string is too long (the subset stops at {MAX_STRING_BYTES} bytes)"
+                        ),
+                    ));
+                }
+                self.terminal.write_line(&line);
+                Ok(Value::Nil)
             }
-            self.terminal.write_line(&line);
-            return Ok(());
+            "peripheral.getType" => {
+                let side = self.text_argument(callee, arguments, 0)?;
+                Ok(self
+                    .world
+                    .peripheral_type(&side)
+                    .map_or(Value::Nil, Value::Str))
+            }
+            "peripheral.getNames" => {
+                let side = self.text_argument(callee, arguments, 0)?;
+                Ok(self
+                    .world
+                    .peripheral_methods(&side)
+                    // The subset has no tables: the names arrive as one tab-separated line, which
+                    // `print` then shows in columns (documented deviation).
+                    .map_or(Value::Nil, |names| Value::Str(names.join("\t"))))
+            }
+            "peripheral.call" => {
+                let side = self.text_argument(callee, arguments, 0)?;
+                let method = self.text_argument(callee, arguments, 1)?;
+                // The two built-ins are the wrapper's upstream, so `call` answers them here rather
+                // than asking a peripheral's own method list.
+                match method.as_str() {
+                    "getType" => Ok(self
+                        .world
+                        .peripheral_type(&side)
+                        .map_or(Value::Nil, Value::Str)),
+                    "getNames" => Ok(self
+                        .world
+                        .peripheral_methods(&side)
+                        .map_or(Value::Nil, |names| Value::Str(names.join("\t")))),
+                    _ => self
+                        .world
+                        .peripheral_call(&side, &method, arguments.get(2..).unwrap_or(&[]))
+                        .map_err(|message| LuaError::runtime(self.line, message)),
+                }
+            }
+            _ => Err(LuaError::runtime(
+                self.line,
+                format!("attempt to call a nil value (global '{callee}')"),
+            )),
         }
-        let callee = self.lookup(name);
-        Err(LuaError::runtime(
-            self.line,
-            format!(
-                "attempt to call a {} value (global '{name}')",
-                callee.type_name()
-            ),
-        ))
+    }
+
+    /// The `index`-th argument as the string Lua's own argument check demands, with Lua's message
+    /// when it is another type or missing.
+    fn text_argument(
+        &self,
+        callee: &str,
+        arguments: &[Value],
+        index: usize,
+    ) -> Result<String, LuaError> {
+        match arguments.get(index) {
+            Some(Value::Str(text)) => Ok(text.clone()),
+            Some(other) => Err(LuaError::runtime(
+                self.line,
+                format!(
+                    "bad argument #{} to '{callee}' (string expected, got {})",
+                    index + 1,
+                    other.type_name()
+                ),
+            )),
+            None => Err(LuaError::runtime(
+                self.line,
+                format!(
+                    "bad argument #{} to '{callee}' (string expected, got no value)",
+                    index + 1
+                ),
+            )),
+        }
     }
 
     fn number(&self, value: Value) -> Result<f64, LuaError> {
@@ -1172,6 +1352,13 @@ impl Machine<'_> {
                 left,
                 right,
             } => self.binary(*operator, left, right),
+            Expr::Call { callee, args } => {
+                let mut values = Vec::with_capacity(args.len());
+                for argument in args {
+                    values.push(self.evaluate(argument)?);
+                }
+                self.invoke(callee, &values)
+            }
         }
     }
 
@@ -1515,5 +1702,182 @@ mod tests {
         // from the whole chunk, so the outer `print(2)` never runs.
         assert_eq!(out("print(1) return"), ["1"]);
         assert!(out("do return end print(2)").is_empty());
+    }
+
+    // ------------------------------------------------------------ peripherals
+
+    /// A world with one peripheral on its right side, which answers `echo` (its first argument
+    /// back) and `add` (two numbers summed), and logs every call it is given.
+    #[derive(Default)]
+    struct Stub {
+        calls: Vec<(String, String, Vec<LuaValue>)>,
+    }
+
+    impl World for Stub {
+        fn peripheral_type(&mut self, side: &str) -> Option<String> {
+            (side == "right").then(|| "computercraft:harness".to_owned())
+        }
+
+        fn peripheral_methods(&mut self, side: &str) -> Option<Vec<String>> {
+            (side == "right").then(|| vec!["echo".to_owned(), "add".to_owned()])
+        }
+
+        fn peripheral_call(
+            &mut self,
+            side: &str,
+            method: &str,
+            arguments: &[LuaValue],
+        ) -> Result<LuaValue, String> {
+            if side != "right" {
+                return Ok(LuaValue::Nil);
+            }
+            self.calls
+                .push((side.to_owned(), method.to_owned(), arguments.to_vec()));
+            match method {
+                "echo" => Ok(arguments.first().cloned().unwrap_or(LuaValue::Nil)),
+                "add" => match (arguments.first(), arguments.get(1)) {
+                    (Some(LuaValue::Number(left)), Some(LuaValue::Number(right))) => {
+                        Ok(LuaValue::Number(left + right))
+                    }
+                    _ => Err("add expects two numbers".to_owned()),
+                },
+                other => Err(format!("{other} is not a method")),
+            }
+        }
+    }
+
+    fn out_with(program: &str, world: &mut dyn World) -> Vec<String> {
+        let mut terminal = Terminal::new(51, 19);
+        let result = run_with(program, &mut terminal, world);
+        assert_eq!(result, Ok(()), "program failed: {program}");
+        terminal.lines().to_vec()
+    }
+
+    #[test]
+    fn a_peripheral_call_can_be_printed() {
+        // The slice's whole point: a call is an expression, and a value comes back.
+        assert_eq!(
+            out_with(
+                "print(peripheral.call('right', 'getType'))",
+                &mut Stub::default()
+            ),
+            ["computercraft:harness"]
+        );
+    }
+
+    #[test]
+    fn a_side_with_no_peripheral_answers_nil() {
+        // The differential the e2e's stone neighbour relies on: a side that reaches no peripheral
+        // prints `nil`, and nothing stops the program (the subset has no `pcall`).
+        for program in [
+            "print(peripheral.call('left', 'getType'))",
+            "print(peripheral.getType('left'))",
+            "print(peripheral.getNames('left'))",
+        ] {
+            assert_eq!(
+                out_with(program, &mut Stub::default()),
+                ["nil"],
+                "{program}"
+            );
+        }
+    }
+
+    #[test]
+    fn get_names_answers_one_tab_separated_line() {
+        // The subset has no tables, so the names arrive as one line (documented deviation); the
+        // names themselves are the peripheral's own, in the order it lists them.
+        assert_eq!(
+            out_with("print(peripheral.getNames('right'))", &mut Stub::default()),
+            ["echo\tadd"]
+        );
+    }
+
+    #[test]
+    fn a_string_and_a_number_round_trip_through_a_method() {
+        assert_eq!(
+            out_with(
+                "print(peripheral.call('right', 'echo', 'hi'), peripheral.call('right', 'add', 2, 3))",
+                &mut Stub::default()
+            ),
+            ["hi\t5"]
+        );
+    }
+
+    #[test]
+    fn the_arguments_reach_the_peripheral_untouched() {
+        let mut world = Stub::default();
+        out_with("peripheral.call('right', 'echo', 'a', 1, true)", &mut world);
+        assert_eq!(
+            world.calls,
+            [(
+                "right".to_owned(),
+                "echo".to_owned(),
+                vec![
+                    LuaValue::Str("a".to_owned()),
+                    LuaValue::Number(1.0),
+                    LuaValue::Bool(true)
+                ]
+            )]
+        );
+    }
+
+    #[test]
+    fn a_call_is_a_statement_and_its_answer_is_dropped() {
+        let mut world = Stub::default();
+        assert!(out_with("peripheral.call('right', 'echo', 'x')", &mut world).is_empty());
+        assert_eq!(world.calls.len(), 1);
+    }
+
+    #[test]
+    fn print_is_a_call_like_any_other_and_answers_nil() {
+        assert_eq!(out("print(print(\"a\"))"), ["a", "nil"]);
+    }
+
+    #[test]
+    fn a_calls_answer_can_be_stored_in_a_local() {
+        assert_eq!(
+            out_with(
+                "local kind = peripheral.getType('right') print(kind)",
+                &mut Stub::default()
+            ),
+            ["computercraft:harness"]
+        );
+    }
+
+    #[test]
+    fn a_side_that_is_not_a_string_is_a_lua_error() {
+        let mut terminal = Terminal::new(51, 19);
+        let error = run_with("peripheral.getType(1)", &mut terminal, &mut Stub::default())
+            .expect_err("a number is not a side");
+        assert!(
+            matches!(&error, LuaError::Runtime { message, .. } if message.contains("string expected")),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn a_method_that_refuses_its_arguments_stops_the_program() {
+        let mut terminal = Terminal::new(51, 19);
+        let error = run_with(
+            "print(peripheral.call('right', 'add', 'x'))",
+            &mut terminal,
+            &mut Stub::default(),
+        )
+        .expect_err("add refused a string");
+        assert!(
+            matches!(&error, LuaError::Runtime { message, .. } if message.contains("two numbers")),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn a_dotted_callee_that_is_not_a_peripheral_is_a_runtime_error() {
+        let mut terminal = Terminal::new(51, 19);
+        let error = run_with("foo.bar()", &mut terminal, &mut Stub::default())
+            .expect_err("there is no foo");
+        assert!(
+            matches!(&error, LuaError::Runtime { message, .. } if message.contains("nil value")),
+            "unexpected error: {error}"
+        );
     }
 }

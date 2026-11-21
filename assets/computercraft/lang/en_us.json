@@ -4,5 +4,7 @@
   "block.computercraft.computer_command": "Command Computer",
   "item.computercraft.computer_normal": "Computer",
   "item.computercraft.computer_advanced": "Advanced Computer",
-  "item.computercraft.computer_command": "Command Computer"
+  "item.computercraft.computer_command": "Command Computer",
+  "block.computercraft.peripheral_harness": "Peripheral Harness",
+  "item.computercraft.peripheral_harness": "Peripheral Harness"
 }

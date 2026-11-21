@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "computercraft:block/peripheral_harness"
+  }
+}

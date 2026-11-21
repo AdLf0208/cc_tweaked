@@ -1,11 +1,11 @@
-# Package receipt — computercraft 0.2.2
+# Package receipt — computercraft 0.2.3
 
 | field | value |
 |---|---|
-| version | `0.2.2` |
+| version | `0.2.3` |
 | file | `computercraft.hmod` |
-| bytes | 47,938 |
-| sha256 | `e364023e7be61bcc142f79ea7084aaa7b07f935ebb2c118a9fe517e764304c3d` |
+| bytes | 59,985 |
+| sha256 | `0eab52fc8434915257eb5c74c1a9d853c41d429311f85139c4ac49fb5fcfdfe2` |
 | source | this tag — the tree here is the source that produced the archive |
 | game | 26.3 |
 | horizon | `0a875da91dbb0fdcb7ba8c42c11341aa229af51a` |

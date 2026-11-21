@@ -62,7 +62,9 @@ WRONG = [
     [GOLD, PANE, GOLD],
 ]
 
-SELFTEST = os.environ.get("SELFTEST") == "1"
+# `SELFTEST=2` is this phase's counterfactual: slice 3 took `SELFTEST=1` for its own
+# (the peripheral assertion), so every phase keeps its own number.
+SELFTEST = os.environ.get("SELFTEST") == "2"
 
 
 def cells(layout: list[list[str | None]]) -> dict[int, str]:

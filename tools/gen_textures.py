@@ -53,6 +53,9 @@ PALETTE = {
     "command_light": (0xC0, 0xB0, 0xDC),
     "command": (0x8A, 0x76, 0xAD),
     "command_dark": (0x59, 0x48, 0x78),
+    "bench_light": (0xA8, 0xD8, 0xD0),
+    "bench": (0x6F, 0xA9, 0xA0),
+    "bench_dark": (0x47, 0x72, 0x6C),
     "bezel": (0x3A, 0x3F, 0x44),
     "screen_off": (0x10, 0x14, 0x16),
     "screen_on": (0x2E, 0x6F, 0x5E),
@@ -161,6 +164,9 @@ def top_texture(case: Case = CASE) -> bytes:
 
 ADVANCED: Case = ("advanced_light", "advanced", "advanced_dark")
 COMMAND: Case = ("command_light", "command", "command_dark")
+#: The peripheral probe's case: a colour none of the computers uses, so a screenshot tells which
+#: block answered.
+BENCH: Case = ("bench_light", "bench", "bench_dark")
 
 TEXTURES_TO_WRITE = {
     "computer_normal_front.png": front_texture(lit=False),
@@ -173,6 +179,8 @@ TEXTURES_TO_WRITE = {
     "computer_command_front.png": front_texture(lit=False, case=COMMAND),
     "computer_command_side.png": side_texture(case=COMMAND),
     "computer_command_top.png": top_texture(case=COMMAND),
+    # The peripheral probe (slice 3): a case with vents, in its own colour.
+    "peripheral_harness.png": side_texture(case=BENCH),
 }
 
 

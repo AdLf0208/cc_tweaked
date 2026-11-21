@@ -3,15 +3,17 @@
 Ported from **CC: Tweaked 1.21.1-forge-1.121.0** (`cc-tweaked/CC-Tweaked`),
 Minecraft Java 1.21.1 NeoForge, **content / `deep`**, core, priority P0.
 
-**Format: the flat SDK package (mod API `0.2`), version `0.2.2`.** The retired
+**Format: the flat SDK package (mod API `0.2`), version `0.2.3`.** The retired
 `.hnmod` bundle (0.1.0, submitted as **PR #788**) was closed in the format purge
 (Horizon retired `.hnmod`, #17992). The code mod is now one `computercraft.hmod`
 carrying `horizon-mod.toml` + `Cargo.toml` + `src/` + `assets/` + `data/`,
 compiled by the launcher against **Horizon nightly
 `0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** (2026-11-20) and **mixins
-`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**. `runtime.rs` is the old file
-byte for byte. Version history: `0.2.0` the migration, `0.2.1` the review fixes,
-**`0.2.2` slice 2 — the computer block family** (§"Slice 2" below).
+`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**. `runtime.rs` was the old file
+byte for byte through 0.2.2; 0.2.3 adds calls-as-expressions and the three
+peripheral builtins to it (`sha256 42f0952a…3e21`). Version history: `0.2.0` the migration, `0.2.1` the review fixes,
+`0.2.2` slice 2 — the computer block family, **`0.2.3` slice 3 — the peripheral
+surface** (§"Slice 3" below).
 
 ## Licence — CCPL-1.0, rank 1 (copyleft-style), publishable under the same licence
 
@@ -43,7 +45,7 @@ The brief's ladder, worked in order, with the measurements:
 |---|---|---|
 | **(A) real Lua** (`piccolo`, pure-Rust VM) | **refused by the retired planner** | `retired-hnmod/…` in `../_shared/evidence/computercraft/`: `E_CRATE_DEPENDENCY: computercraft needs piccolo ^0.3, which isn't in Horizon's Cargo.lock` (exit 1); the old pin's lock had **0** Lua packages in **565**, for the injected module. The VM itself built in a scratch crate (`ladder-a-piccolo-standalone.log`) |
 | | **re-openable at the SDK** | the SDK's own `Cargo.toml` comment says *"Any other registry dependency must be pinned with `horizon-launcher native-lock .` before building"* — a launcher tool that did not exist at the old pin. So a real Lua VM is no longer blocked by the lock, only by a dependency decision + a slice; that is a **later slice**, not this migration (see Gaps) |
-| **(B) documented Lua subset** | **implemented and unchanged by the migration** | `src/runtime.rs`: lexer, precedence-climbing parser and evaluator, **31 unit tests**, byte-identical to the `.hnmod` version at the migration (`sha256 7f9465ab…74d2be`; 0.2.1 added the `MAX_STRING_BYTES` budget, now `sha256 e11eebb6…a017`, and its test) |
+| **(B) documented Lua subset** | **implemented; unchanged by the migration, extended by slices 1–3** | `src/runtime.rs`: lexer, precedence-climbing parser and evaluator. Byte-identical to the `.hnmod` version at the migration (`sha256 7f9465ab…74d2be`); 0.2.1 added the `MAX_STRING_BYTES` budget (`e11eebb6…a017`); **0.2.3 added calls-as-expressions, the `World` trait and the three peripheral builtins (`42f0952a…3e21`, 43 tests)** |
 | **(C) neither** | not reached | the readout below makes the output observable, so a computer that does something could be shipped |
 
 ## The slice boundary
@@ -69,7 +71,8 @@ One block, one program, one observable:
    font atlas.
 5. Four commands, now **registered in the server's command tree** (they complete
    in chat and are permission-checked): `/computercraft load <pos> <program>`,
-   `run <pos>`, `screen <pos>`, `power <pos> on|off`.
+   `run <pos>` (and, from 0.2.3, `run <pos> <program>`), `screen <pos>`,
+   `power <pos> on|off`.
 
 ## Migration to the SDK format
 
@@ -82,7 +85,7 @@ One block, one program, one observable:
 | `mixins/computercraft/horizon-mixin.toml` (plan, 9 injections) | **gone**: hooks are methods of one `impl Hooks` / one `impl BlockEntityPart` |
 | `mixins/computercraft/{block_entity,block_entity_ticks,…}.rs` (8 helpers) | **gone**: the same bodies are the Part's methods in `src/lib.rs` |
 | `mixins/computercraft/support.rs` (13,668 B glue) | `src/lib.rs` (the Part + `Hooks` + the NBT record) — ~15 KB, no per-hook split |
-| `mixins/computercraft/runtime.rs` (46,546 B) | **`src/runtime.rs`, byte-identical** at the migration (`sha256 7f9465aba8b94b4c7480a3d0d655bec200726401bd90dbd058d20617a874d2be`). **From 0.2.1 it is `sha256 e11eebb6af48ba51b118ee23c638a8b837f96cccafc2a348b4d135d7e160a017`**: the review's `MAX_STRING_BYTES` budget (one constant, one guard, one test) is the only change since, and the file's logic is otherwise the 0.1.0 file |
+| `mixins/computercraft/runtime.rs` (46,546 B) | **`src/runtime.rs`, byte-identical** at the migration (`sha256 7f9465ab…74d2be`). 0.2.1 made it `e11eebb6…a017` (the review's `MAX_STRING_BYTES` budget). **0.2.3 makes it `42f0952afb24b96f77fd0f12da8a8bab81bf723c1a58385ac815ff878f303e21`**: calls became expressions (a dotted callee, `Expr::Call`), the `World` trait and `run_with` were added, and the three peripheral builtins dispatch through them — the lexer, the precedence table and `print`'s semantics are unchanged |
 | `mixins/computercraft/data/computercraft-content.hmod` + `embedded_content.rs` (AE2 pattern) | **gone**: `assets/` and `data/` sit beside `src/` in the one package; no embedding and no `content_root` hook |
 | `content/horizon-mod.toml` (id/version 0.1.0) | **one** `horizon-mod.toml` (`api = "0.2"`, `capabilities = ["registries"]`, version **0.2.0**) |
 | — | `src/commands.rs` + `src/screen.rs`: the pure logic the migration *added* (below) |
@@ -127,11 +130,12 @@ with `BlockPos` and `String` arguments already parsed. The e2e's
 before. The old chat plumbing therefore **survives, and is better typed**; nothing
 about it is a gap.
 
-### New pure modules, and why `runtime.rs` did not grow
+### New pure modules (slice 1), and why `runtime.rs` did not grow *then*
 
-`runtime.rs` had to stay byte-identical, so the two pieces of logic the migration
-needed went to their own pure modules, test-first (18 new tests, seen failing
-with `todo!()` first):
+`runtime.rs` had to stay byte-identical for the *migration* (slice 3 is the slice
+that changes it, on purpose and test-first), so the two pieces of logic the
+migration needed went to their own pure modules, test-first (18 new tests, seen
+failing with `todo!()` first):
 
 - `src/commands.rs` — `asked(sub, program, switch) -> Asked` (the command surface,
   its two usage lines) and `screen_json(at, powered, running, lines)` (the one
@@ -262,12 +266,24 @@ recorded above, not by reproducing a broken behaviour.
   `pcall`/`error`, string/table/math/os libraries, `require`/`dofile`,
   coroutines (the basis of every CC API), varargs, `#` on tables, integer
   division `//`, `goto`, long strings `[[…]]`, hex literals, `\ddd` escapes.
-- **Peripherals and the world**: wired/wireless modems and `rednet`, monitors,
-  disk drives and floppies, printers, speakers, the lectern, cables
-  (`cable`/`wired_modem_full`), the redstone relay, pocket computers, turtles,
-  `gps`, `http`, `peripheral`/`os.pullEvent`.
+- **Peripherals and the world — the asking half is DONE (slice 3, 0.2.3).** What
+  is left of this bullet: every upstream block that *answers* the key (wired
+  and wireless modems and `rednet`, monitors, disk drives and floppies, printers,
+  speakers, the lectern, the cables `cable`/`wired_modem_full`, the redstone
+  relay), pocket computers and pocket upgrades, turtles and their upgrades,
+  `gps`, `http`, and `os.pullEvent` with an event queue. The key, the trait, the
+  lookup and the three Lua builtins are in place; each of those blocks is its own
+  family.
+- **A shared peripheral `[api]` crate — `blocked(peripheral-api-crate)`.** The pin
+  refuses one capability name answered with two handler types, so a second native
+  package (`advancedperipherals` is the one waiting) cannot answer
+  `computercraft:peripheral` with its own `Peripheral` trait. The fix is an
+  `[api]` crate publishing this trait beside the key, which is a packaging job,
+  not a behaviour one. Recorded rather than faked: today the answering half is
+  this package's own.
 - **Block behaviour — the three computers are DONE (slice 2, 0.2.2).** What is
-  left of this bullet: the jar's **other thirteen block types** (16 blockstates
+  left of this bullet: the jar's **other twelve block types** (the probe block
+  below is port-only) (16 blockstates
   hold three computers; the rest are `disk_drive`, `lectern`,
   `monitor_normal|advanced`, `printer`, `redstone_relay`, `speaker`,
   `turtle_normal|advanced`, `cable`, `wired_modem_full`,
@@ -286,10 +302,10 @@ recorded above, not by reproducing a broken behaviour.
 - **Placement — DONE in slice 2.** A computer is now placed **by hand**
   (`ctl place`) from two yaws and its facing read back (north at yaw 0, east at
   yaw 90), which is the `state_for_placement` block moment in game.
-- **The in-game legs**: `tools/e2e.sh` now runs on a launcher-built game and is
-  green (`../_shared/evidence/computercraft-e2e/`: `PASS` + `EXIT:0`, control
-  `EXIT:1`, `SELFTEST=1` `EXIT:1`, `--strict` 3/3). `tools/visual.sh` (the
-  screenshot leg) is still written for the `.hnmod` build and was **not**
+- **The in-game legs**: `tools/e2e.sh` runs on a launcher-built game and is
+  green at 0.2.3 (`../_shared/evidence/computercraft-e2e/`: `PASS` + `EXIT:0`,
+  control `EXIT:1`, `SELFTEST=1|2|3` `EXIT:1`, `--strict` 5/5). `tools/visual.sh`
+  (the screenshot leg) is still written for the `.hnmod` build and was **not**
   re-run: the two screenshots in the evidence folder are from 0.1.0.
 
 ## Review fixes (2026-11-18) — registry review #1166
@@ -427,45 +443,181 @@ computercraft:computer_normal` + `EXIT:1`; `SELFTEST=1` → `FAIL: selftest adva
 `e364023e7be61bcc142f79ea7084aaa7b07f935ebb2c118a9fe517e764304c3d`, 44 entries, no packed
 `Cargo.lock`; two builds `cmp`-identical.
 
+## Slice 3 (0.2.3) — the peripheral surface
+
+**The gap line it comes from** (`## Gaps`, "Peripherals and the world"): *"wired/wireless modems and
+`rednet`, monitors, disk drives and floppies, printers, speakers, the lectern, cables …, pocket
+computers, turtles, `gps`, `http`, `peripheral`/`os.pullEvent`"* — this slice is `peripheral`, the
+**asking half**: the trait a neighbour answers, the capability key it is asked through, the
+six-neighbour lookup a placed computer performs, and `peripheral.getType|getNames|call` over it.
+
+**Why it matters, measured 2026-11-21.** `ports/advancedperipherals` stopped at
+`blocked(no-parent-addon-surface)` with **589** `dan200.computercraft.*` imports across 515 classes
+(`IPeripheral` 22, `ITurtleAccess` 39, `ITurtleUpgrade` 20, `IPocketUpgrade` 17) against **0**
+peripheral surface here and **0** `computercraft:*` capabilities in the pin. It is the one parent
+surface that unblocks a whole mod.
+
+**Why it fits the tier (`deep`).** It is block-entity behaviour (the tick's lookup) plus a language
+feature (a call as an expression, and a dotted callee), proved in game; no renderer, no machine, no
+invented content. The pin has the **provider** half (`Registrar::block_capability` with an arbitrary
+`CapabilityKey`) and `LevelRef::capability` to ask it; what was missing was this package's own key,
+trait, lookup and Lua surface.
+
+**What it adds**
+
+| Area | 0.2.2 | 0.2.3 |
+|---|---|---|
+| The trait | — | `peripheral::Peripheral`: `peripheral_type`, `methods`, `call(host, method, args)`; one handler per lookup, asked through `&self` (the pin hands a capability's handler out read-only) |
+| The key | — | `PERIPHERAL: CapabilityKey<dyn Peripheral>` = `computercraft:peripheral`, namespace-owned |
+| The geometry | — | `peripheral::neighbour(pos, facing, side)` — six relative sides plus the four horizontals and `up`/`down`, pure and tested |
+| The lookup | — | `Lookup` (the runtime's `World`) asks `LevelRef::capability` at `pos + normal`, through the neighbour's face; no level in place ⇒ `NoPeripherals` |
+| The language | `print(…)` as a statement only | **calls are expressions** (`local t = peripheral.getType('right')`), dotted callees, `print(print("a"))` → `a`, `nil` |
+| The builtins | — | `peripheral.getType` (type or `nil`), `peripheral.getNames` (one tab-separated line), `peripheral.call` (builtins, then the peripheral's own method) |
+| The probe | — | `computercraft:peripheral_harness` — a block that answers `computercraft:harness` with `add`/`echo`, so the path is provable; its own generated texture |
+| Commands | 4 usages | 5: `/computercraft run <pos> <program>` beside `run <pos>` |
+
+**Deviations recorded in this slice** (all deliberate, all in the `## Deviations` table's spirit):
+
+1. **`getNames` answers one tab-separated string.** The subset has no tables, and multiple returns
+   are a gap; `print(peripheral.getNames('right'))` therefore prints `add<TAB>echo` in columns
+   instead of printing a table.
+2. **`peripheral.call` on a side with no peripheral answers `nil`** rather than raising upstream's
+   "No peripheral attached": the subset has no `pcall`, so a program that must probe a side would
+   otherwise be unable to continue. A method a peripheral does **not** have is still an error
+   (`attempt to call a nil value (method 'explode' of computercraft:harness)`), as in Lua.
+3. **The probe block is port-only content.** Upstream has no such block; monitors and modems are the
+   upstream peripherals and are later slices, so the in-game leg needs a block whose answer is
+   known. It is not craftable and not in the creative tab; the leg places it with `/setblock`.
+4. **Sides are the computer's own.** `front` is the face the terminal is drawn on; `left`/`right`
+   are that face's left and right seen from the computer looking out of its screen (a north-facing
+   computer reaches **west** on its left, east on its right). `peripheral.wrap`'s absolute names are
+   accepted too.
+
+**Red first (verbatim, `../_shared/evidence/computercraft/red-0.2.3-peripheral.log`).** The new
+rules were written with `todo!()` bodies:
+
+```
+---- commands::tests::run_takes_a_program_and_keeps_it stdout ----
+thread '…' panicked at src/commands.rs:126:17:
+not yet implemented: run with a program
+---- peripheral::tests::each_side_reaches_the_neighbour_the_computer_names stdout ----
+thread '…' panicked at src/peripheral.rs:83:5:
+not yet implemented: the side-to-neighbour geometry
+---- runtime::tests::a_peripheral_call_can_be_printed stdout ----
+thread '…' panicked at src/runtime.rs:206:5:
+not yet implemented: the interpreter's peripheral builtins
+test result: FAILED. 57 passed; 17 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Green: **77 tests** (43 `runtime`, 9 `peripheral`, 14 `commands`, 7 `screen`, 4 `family`), clippy
+`-D warnings` 0, `fmt --check` clean.
+
+**In game** (`../_shared/evidence/computercraft-e2e/e2e-launcher.log`, `--offscreen`, The End arena
+at x=200 on a stone floor, one SDK package at `0a875da`, computer at 200,101,0 facing north):
+
+```
+  neighbours: computercraft:peripheral_harness at right, minecraft:stone at left, air at top
+  peripheral.call('right','getType'): computercraft:ha|rness
+  peripheral.getNames('right'): add	echo
+  echo round-trips a string: hi
+  add sums two numbers: 5
+  call on a stone neighbour: nil
+  getType and getNames on a stone neighbour: nil	nil
+  call on the air above the computer: nil
+  an unknown method is an error: error: line 1: a|ttempt to call a| nil value (meth|od 'explode' of |computercraft:ha|rness)
+PASS: … (+ EXIT:0)
+```
+
+The type name wraps because the one-block terminal is 16 columns wide (upstream's basic terminal is
+51×19); the assertion is the exact wrapped value, not a substring. The differential is a **stone**
+block on the left — asserted present *before* the call — and air above, so a `nil` cannot be an
+empty side. `SELFTEST=1` inverts the harness assertion and the run ends
+`FAIL: peripheral.call('right','getType'): expected [nil], got [computercraft:ha|rness]` + `EXIT:1`
+(`e2e-launcher-selftest.log`); `SELFTEST=2` (recipes) and `SELFTEST=3` (slice 2's terminal) keep their
+own counterfactuals, both `EXIT:1`. Control (`GAME=$CONTROL_GAME`) `EXIT:1`;
+`check-e2e-logs.py computercraft-e2e --strict` → `logs=5 ok=5`.
+
+### Coverage by family (`check-coverage.py`)
+
+The mechanical table `ports/tools/check-coverage.py` reads (family vocabulary, not prose):
+
+| Family | Status | Evidence |
+|---|---|---|
+| `block` | tested | phase A/E: all four blocks placed, read back, and mined in survival |
+| `block_entity` | tested | phases B/C/H: the terminal in the block entity's saved data, read back through `/computercraft screen`, and the tick's program run |
+| `loot_table` | tested | phase E: each block mined in survival drops exactly one of itself |
+| `recipe:minecraft:crafting_shaped` | tested | phase D: the three computer recipes craft with ingredients consumed; the wrong pattern makes nothing |
+| `multiblock` | not ported | the jar has none (the mod's multiblocks are turtles' and monitors' families, later slices) |
+
+**Coverage of the peripheral surface**
+
+| family | state | how |
+|---|---|---|
+| `peripheral.getType(side)` | **tested** | harness side prints `computercraft:harness`; stone and air print `nil` |
+| `peripheral.getNames(side)` | **tested** | `add<TAB>echo` on the harness, `nil` on stone |
+| `peripheral.call(side, method, …)` with the two builtins | **tested** | `call('right','getType')` prints the type; `call('left','getType')` prints `nil` |
+| a peripheral method with a string argument and a return | **tested** | `echo('hi')` → `hi` |
+| a peripheral method with two numbers and a numeric return | **tested** | `add(2,3)` → `5` |
+| an unknown method | **tested** | the program stops with a Lua error naming the method |
+| the six-relative-side geometry | **tested** | unit tests for all four facings, six distinct neighbours, unknown side/facing refused; in game `right`/`left`/`top` |
+| the probe block (block, item, loot) | **tested** | placed, read back, mined in survival, exactly one dropped |
+| `computercraft:peripheral` answered by another crate | **blocked(peripheral-api-crate)** | the pin refuses one capability name with two handler types, so an add-on needs a shared `[api]` crate publishing the trait; recorded, not faked |
+| modems/rednet, monitors, disk drives, printers, speakers, turtles, pocket upgrades, `os.pullEvent` | **not ported** | later slices; the key is the same, the answering blocks are the work |
+| tables/functions/coroutines in Lua | **not ported** | the VM gap; `getNames`' tab-separated line is the visible consequence |
+
+**Delivered package 0.2.3:** **59,985 B**, sha256
+`0eab52fc8434915257eb5c74c1a9d853c41d429311f85139c4ac49fb5fcfdfe2`, 51 entries, no packed
+`Cargo.lock`; two builds `cmp`-identical.
+
 ## Verification (evidence in `../_shared/evidence/computercraft/`)
 
-All at the pin `0a875da91dbb0fdcb7ba8c42c11341aa229af51a` / mixins `e59da909…`, package 0.2.2
-(**47,938 B**, sha256 `e364023e…4c3d`), every log stamped with that sha and size.
+All at the pin `0a875da91dbb0fdcb7ba8c42c11341aa229af51a` / mixins `e59da909…`, package **0.2.3**
+(**59,985 B**, sha256 `0eab52fc…dfe2`), every log stamped with that sha and size. (`VALIDATION.md`
+§0 is the same ladder written out with the commands; the 0.2.2 table it used to carry is kept as the
+record below §0.)
 
 | Step | Command | Result |
 |---|---|---|
 | Format | `cargo fmt --check` | **exit 0** (`sdk-fmt.log`) |
 | Lints | `cargo clippy --all-targets --offline -- -D warnings` | **exit 0**, 0 warnings (`sdk-clippy.log`) |
-| Unit tests | `cargo test --offline` | **56 passed; 0 failed** (`sdk-test.log`): 31 `runtime` (`sha256 e11eebb6…a017`, the 0.1.0 file plus 0.2.1's byte budget) + 12 `commands` + 7 `screen` + 6 `family`; TDD: the 6 new tests (and the 4 readout tests the signature change touched) failed with `not yet implemented` first (`red-0.2.2-family-readout.log`) |
+| Unit tests | `cargo test --offline` | **77 passed; 0 failed** (`sdk-test.log`): 43 `runtime` (`sha256 42f0952a…3e21`) + 9 `peripheral` + 14 `commands` + 7 `screen` + 4 `family`; TDD: 17 of them failed with `not yet implemented` first (`red-0.2.3-peripheral.log`) |
 | Package | `cargo horizon-mod build` | **exit 0**, `SDK 0a875da … Built ./target/horizon-mod/computercraft.hmod`; **two builds `cmp`-identical** |
-| Registry check | `cargo horizon-mod check computercraft.hmod` | **exit 0**: `computercraft 0.2.2 (native-mod, format native-1/0a875da91…/e59da909…, for 26.3)`, 47 938 bytes, sha256 `e364023e…4c3d`, unsigned (`sdk-check.log`) |
+| Registry check | `cargo horizon-mod check computercraft.hmod` | **exit 0**: `computercraft 0.2.3 (native-mod, format native-1/0a875da91…/e59da909…, for 26.3)`, 59 985 bytes, sha256 `0eab52fc…dfe2`, unsigned (`sdk-check.log`) |
 | Fits (pin) | `cargo horizon-mod fits computercraft.hmod --build 0a875da` | **exit 0**: `CC: Tweaked: 0a875da  made for` (`sdk-fits.log`) — a tautology, kept as the record |
 | Fits (other build) | `cargo horizon-mod fits computercraft.hmod --build 0b14f8a` | **exit 0**: `CC: Tweaked: 0b14f8a  fits` (`sdk-fits-other.log`) — the real gate |
-| Package verifier | `python3 ports/tools/verify-sdk-package.py computercraft` | **1/1**: package, `runtime.rs` byte-identical in the archive, no packed `Cargo.lock` (44 entries), tests, clippy, check, fits, skills gate |
-| In game | `ports/tools/launcher-game.sh build computercraft` + a leased `tools/e2e.sh` | **PASS + EXIT:0** (`computercraft-e2e/e2e-launcher.log`); control `GAME=$CONTROL_GAME` **FAIL + EXIT:1**; `SELFTEST=1` **FAIL + EXIT:1**; `check-e2e-logs.py computercraft-e2e --strict` → **logs=3 ok=3** |
+| Package verifier | `python3 ports/tools/verify-sdk-package.py computercraft` | **1/1**: package, `runtime.rs` byte-identical in the archive, no packed `Cargo.lock` (51 entries), 77 tests, clippy 0, check, fits, skills gate (`verify-sdk-package.log`) |
+| In game | `ports/tools/launcher-game.sh build computercraft` (`Compiling computercraft (1 of 1)`) + a leased `tools/e2e.sh` | **PASS + EXIT:0** (`computercraft-e2e/e2e-launcher.log`); control `GAME=$CONTROL_GAME` **FAIL + EXIT:1**; `SELFTEST=1` (the peripheral assertion inverted) **FAIL + EXIT:1**; `SELFTEST=2` (recipes) and `SELFTEST=3` (slice 2's terminal) **FAIL + EXIT:1**; `check-e2e-logs.py computercraft-e2e --strict` → **logs=5 ok=5** |
 
 Retired-format evidence (kept, still valid for the `.hnmod` build it describes;
 the old crate's own `unit-tests.log` was replaced by this migration's run):
 `ladder-check.log`, `ladder-test.log`, `e2e-default.log`, `e2e-embedded.log`,
 `e2e-selftest.log`, `visual.log` and the two screenshots, plus the whole old
 tree in `retired-hnmod/` (see `../_shared/evidence/computercraft/README.md`).
+The 0.2.2 logs are in `retired-0.2.3/` and the 0.2.2 game legs in
+`../_shared/evidence/computercraft-e2e/retired-0.2.2/`.
 
-Deliverable: **`computercraft.hmod`** (47,938 B, 44 entries, SHA-256
-`e364023e7be61bcc142f79ea7084aaa7b07f935ebb2c118a9fe517e764304c3d`) holding
+Deliverable: **`computercraft.hmod`** (59,985 B, 51 entries, SHA-256
+`0eab52fc8434915257eb5c74c1a9d853c41d429311f85139c4ac49fb5fcfdfe2`) holding
 `horizon-mod.toml`, `Cargo.toml`, `LICENSE`, `LICENSE-NOTICE.md`, `README.md`,
-`uses.json`, `assets/computercraft/**` (23 files, 10 of them generated textures),
-`data/computercraft/**` (10 files) and
-`src/{lib,family,runtime,commands,screen}.rs`. No `Cargo.lock` is packed.
+`uses.json`, `assets/computercraft/**` (27 files, 11 of them generated textures),
+`data/computercraft/**` (12 files) and
+`src/{lib,family,peripheral,runtime,commands,screen}.rs`. No `Cargo.lock` is
+packed.
 
-### Changelog for the resubmission (supersedes #788)
+### Changelog for the resubmission (supersedes #788 and the 0.2.2 update)
 
-> Supersedes #788, closed because Horizon retired `.hnmod` (#17992), and 0.2.1
-> (PR #1166). Changes in 0.2.2: the jar's other two computers
-> (`computer_advanced`, `computer_command`) as full members — blocks, 12-state
-> blockstates, generated textures and models, item models, recipes, loot tables,
-> creative-tab entries — over one block entity type covering the family; the
-> `/computercraft screen` readout now names the block it read; the family guard
-> accepts all three so the commands act on any computer. `runtime.rs` and its 31
-> tests are unchanged. Now pinned to `0a875da` / `e59da90`.
+> Supersedes #788, closed because Horizon retired `.hnmod` (#17992), and the
+> 0.2.2 update (PR #1166). Changes in 0.2.3 — **the peripheral surface**: a
+> `Peripheral` trait and this package's own `computercraft:peripheral`
+> capability key, the six-side neighbour lookup a placed computer performs
+> against its neighbours (`LevelRef::capability`), and
+> `peripheral.getType`/`getNames`/`call` in the Lua subset — which now accepts a
+> call as an expression and a dotted callee, so `print(peripheral.call('right',
+> 'getType'))` runs. A probe block (`computercraft:peripheral_harness`, its own
+> generated texture, not craftable) answers the key so the path is proved in
+> game; `/computercraft run <pos> <program>` joins the four usages. `runtime.rs`
+> gained calls-as-expressions and the three builtins (new sha
+> `42f0952a…3e21`); the lexer, precedence and `print` are unchanged. Still
+> pinned to `0a875da` / `e59da90`.
 
-Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-port
+Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices

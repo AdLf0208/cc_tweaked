@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# In-game check for CC: Tweaked (SDK format, slice 2: the computer block family).
+# In-game check for CC: Tweaked (SDK format, slice 3: the peripheral surface).
 #
 # The claim: the jar's three computers — `computer_normal`, `computer_advanced` and
 # `computer_command` — are all real blocks in game; each carries its own terminal,
 # each is craftable from its own recipe, each drops itself, and the port's readout
-# names the block it actually read.
+# names the block it actually read. And a placed computer **asks its neighbours**
+# through `computercraft:peripheral`: `peripheral.call('right', 'getType')` on a block
+# that answers the key prints its type, while the same call on a plain stone neighbour
+# prints `nil`.
 #
 # The readout is the port's own command, `/computercraft screen <x> <y> <z>`, which
 # answers one line of JSON with the block it read and the terminal's lines (the
@@ -21,9 +24,11 @@
 #
 # Legs
 #   default        the modded game: every phase below, all assertions true
-#   SELFTEST=1     the same setup with two assertions inverted (the advanced
-#                  computer's terminal and a crafted result): the run must fail,
-#                  proving the check can fail
+#   SELFTEST=1     the peripheral assertion inverted (the harness side must print
+#                  `nil`): the run must reach phase H and fail there, proving the
+#                  slice's own assertion can fail
+#   SELFTEST=2     the recipe phase inverted (`craft_family.py`)
+#   SELFTEST=3     the advanced computer's terminal inverted (slice 2's pair)
 #   GAME=$CONTROL_GAME   the same Nightly without the package: the first
 #                  assertion (the item exists) fails, which is the differential
 #                  that the ids come from this package
@@ -39,6 +44,11 @@
 #   E  each block breaks and drops one of itself (the 26.3 loot dialect)
 #   F  CONTROLS: a stone block is not a computer; a powered-off computer runs
 #      nothing through a load and ten ticks; powering it back on runs the program
+#   H  PERIPHERALS: a computer facing north calls `peripheral.call('right', …)` on
+#      the harness block beside it and prints its type, its method names, an echoed
+#      string and a summed number; the same calls on a plain stone neighbour, and
+#      above the computer where there is air, print `nil` (the differential)
+#   G  a computer placed by hand from two yaws faces the player (the block moment)
 set -euo pipefail
 
 CLONE=/home/adlf/Desktop/all_the_mods_10_rust_rewrite
@@ -53,6 +63,8 @@ WORLD=${WORLD:-CCE2E}
 NORMAL=computercraft:computer_normal
 ADVANCED=computercraft:computer_advanced
 COMMAND=computercraft:computer_command
+# The port's peripheral probe (slice 3): the block that answers `computercraft:peripheral`.
+HARNESS=computercraft:peripheral_harness
 # The arena: the End's void, far from the central island (a fill at 0,0 lands inside it).
 X0=200
 FLOOR=$((X0 - 4))
@@ -75,7 +87,12 @@ LOT_PX=196              # where the player stands to break it
 [ -d "$RES/assets" ] || { echo "missing prepared resources: $RES" >&2; exit 1; }
 command -v jq >/dev/null || { echo "missing jq (every assertion parses a ctl reply)" >&2; exit 1; }
 
-SCRATCH=$(mktemp -d /tmp/opencode/computercraft-home.XXXXXX)
+# The game's scratch home. `launcher-game.sh env` exports `E2E_TMP` (under ~/.cache, never the
+# 7.5 GB `/tmp` tmpfs, which filled mid-run on 2026-11-21 and made the game exit 3 with "No space
+# left on device" before its socket); otherwise the campaign's usual `/tmp/opencode`.
+SCRATCH_BASE=${E2E_TMP:-/tmp/opencode}
+mkdir -p "$SCRATCH_BASE"
+SCRATCH=$(mktemp -d "$SCRATCH_BASE/computercraft-home.XXXXXX")
 export HORIZON_HOME=$SCRATCH/game
 export HORIZON_LAUNCHER_HOME=$SCRATCH/launcher
 export XDG_DATA_HOME=$SCRATCH/data
@@ -218,8 +235,8 @@ for pair in "$X:$Z" "$AX:$AZ" "$CX:$CZ"; do
     [ "$(screen_field running "${pair%%:*}" "${pair##*:}")" = "true" ] \
         || fail "the computer at ${pair%%:*},${pair##*:} did not report that it ran"
 done
-if [ "$SELFTEST" = 1 ]; then
-    echo "  selftest: asserting the advanced computer's terminal is 'selftest' (must FAIL)"
+if [ "$SELFTEST" = 3 ]; then
+    echo "  selftest 3: asserting the advanced computer's terminal is 'selftest' (must FAIL)"
     expect_lines "$AX" "$AZ" "selftest" "selftest advanced terminal"
 fi
 
@@ -248,17 +265,17 @@ python3 "$PORT/tools/craft_family.py" "$SOCK" "$CTL" "$TABLE_X" "$Y" "$TABLE_Z" 
 echo "  recipes PASS"
 
 echo "== E: each block drops one of itself (the 26.3 loot dialect) =="
-loot_leg() { # loot_leg BLOCK -> sets DROPPED
-    local block=$1 placed
+loot_leg() { # loot_leg BLOCK [STATE] -> sets DROPPED
+    local block=$1 state=${2-[facing=north,state=off]} placed
     ctl command "execute in minecraft:the_end run tp @s $LOT_PX.5 $Y 0.5" >/dev/null
     ctl command "clear @s" >/dev/null
     ctl command "gamemode survival" >/dev/null
     ctl wait 4 >/dev/null
-    ctl command "execute in minecraft:the_end run setblock $LOT_X $Y $LOT_Z ${block}[facing=north,state=off]" >/dev/null
+    ctl command "execute in minecraft:the_end run setblock $LOT_X $Y $LOT_Z ${block}${state}" >/dev/null
     ctl wait 4 >/dev/null
     placed=$(block_state "$LOT_X" "$Y" "$LOT_Z")
     case "$placed" in
-        "$block[facing=north,state=on]"|"$block[facing=north,state=off]") ;;
+        "$block$state"|"$block[facing=north,state=on]"|"$block[facing=north,state=blinking]") ;;
         *) fail "the drop-test $block did not place (got $placed)" ;;
     esac
     ctl break "$LOT_X" "$Y" "$LOT_Z" >/dev/null
@@ -272,8 +289,11 @@ loot_leg() { # loot_leg BLOCK -> sets DROPPED
     DROPPED=$((on_ground + held))
     echo "  $block: broke; $on_ground on the ground, $held picked up"
 }
-for block in "$NORMAL" "$ADVANCED" "$COMMAND"; do
-    loot_leg "$block"
+for block in "$NORMAL" "$ADVANCED" "$COMMAND" "$HARNESS"; do
+    case "$block" in
+        "$HARNESS") loot_leg "$block" "" ;;
+        *) loot_leg "$block" ;;
+    esac
     [ "$DROPPED" = 1 ] \
         || fail "mining $block dropped $DROPPED of itself, expected the one its 26.3 loot table names"
 done
@@ -307,6 +327,55 @@ ctl chat "/computercraft power $CX $Y $CZ on" >/dev/null
 ctl wait 6 >/dev/null
 expect_lines "$CX" "$CZ" "broken" "the loaded program ran after power-on"
 
+echo "== H: the peripheral surface (a placed computer asks its neighbours) =="
+# A computer facing north: its screen faces north, so looking out of it the computer's *right*
+# — the name the program passes — is the east neighbour.
+ctl command "execute in minecraft:the_end run setblock $X $Y $Z ${NORMAL}[facing=north,state=off]" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $((X + 1)) $Y $Z $HARNESS" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $((X - 1)) $Y $Z minecraft:stone" >/dev/null
+ctl command "execute in minecraft:the_end run setblock $X $((Y + 1)) $Z minecraft:air" >/dev/null
+ctl wait 6 >/dev/null
+[ "$(block_state "$((X + 1))" "$Y" "$Z")" = "$HARNESS" ] \
+    || fail "the harness block did not place at the computer's right (got '$(block_state "$((X + 1))" "$Y" "$Z")')"
+[ "$(block_state "$((X - 1))" "$Y" "$Z")" = "minecraft:stone" ] \
+    || fail "the stone control did not place at the computer's left (got '$(block_state "$((X - 1))" "$Y" "$Z")')"
+echo "  neighbours: $HARNESS at right, minecraft:stone at left, air at top"
+
+# The brief's own command: `peripheral.call('right', 'getType')` printed. The terminal is 16
+# columns wide, so the type name wraps at its width (the port's one-block screen, not a monitor).
+p1_expected="computercraft:ha|rness"
+if [ "$SELFTEST" = 1 ]; then
+    echo "  selftest: asserting the harness side answers nil (must FAIL)"
+    p1_expected="nil"
+fi
+load_program "$X" "$Z" "print(peripheral.call('right','getType'))"
+expect_lines "$X" "$Z" "$p1_expected" "peripheral.call('right','getType')"
+
+load_program "$X" "$Z" "print(peripheral.getNames('right'))"
+expect_lines "$X" "$Z" $'add\techo' "peripheral.getNames('right')"
+
+# Values cross in both directions: a string out and back, and two numbers summed.
+load_program "$X" "$Z" "print(peripheral.call('right','echo','hi'))"
+expect_lines "$X" "$Z" "hi" "echo round-trips a string"
+load_program "$X" "$Z" "print(peripheral.call('right','add',2,3))"
+expect_lines "$X" "$Z" "5" "add sums two numbers"
+
+# The differential: the left neighbour is a plain stone block, and it answers nothing. A call
+# that answered `nil` because the side was empty would not prove the lookup read a block, so the
+# stone is asserted to be there first (above) and read back again here.
+load_program "$X" "$Z" "print(peripheral.call('left','getType'))"
+expect_lines "$X" "$Z" "nil" "call on a stone neighbour"
+load_program "$X" "$Z" "print(peripheral.getType('left'), peripheral.getNames('left'))"
+expect_lines "$X" "$Z" $'nil\tnil' "getType and getNames on a stone neighbour"
+# And a side that reaches air: the block above the computer is air, and answers nothing either,
+# so the nil above is about the *block* that answers, not about the side's existence.
+load_program "$X" "$Z" "print(peripheral.call('top','echo','x'))"
+expect_lines "$X" "$Z" "nil" "call on the air above the computer"
+# A method the harness does not have is the program's error, not a silent nil.
+load_program "$X" "$Z" "print(peripheral.call('right','explode'))"
+expect_lines "$X" "$Z" "error: line 1: a|ttempt to call a| nil value (meth|od 'explode' of |computercraft:ha|rness)" \
+    "an unknown method is an error"
+
 echo "== G: a computer placed by hand faces the player (the block moment) =="
 # `state_for_placement` is a block moment, so `/setblock` never exercises it: the item has to be
 # placed by a player. The expected facing is `runtime::facing_for_placement`'s own table (yaw 0 =
@@ -333,4 +402,4 @@ hand_place() { # hand_place BLOCK BX BZ PX PZ YAW WANT
 hand_place "$ADVANCED" 200 -2 200.5 -3.5 0 north
 hand_place "$COMMAND" 203 -2 204.5 -1.5 90 east
 
-echo "PASS: all three computers (normal, advanced, command) exist and place with the jar's state property (blinking accepted, dancing refused), each boots its own terminal, a program loaded into the advanced one left the other two unchanged, the readout names the block and position it read, all three recipes crafted in a table with their ingredients consumed while the advanced pattern with a stone instead of gold made nothing, each block broke and dropped exactly one of itself, a stone block answered that there is no computer, an unregistered id was refused, a powered-off computer ran nothing through a load and ten ticks before power-on ran the loaded program, and a computer placed by hand from two different yaws faced the player both times"
+echo "PASS: all three computers (normal, advanced, command) exist and place with the jar's state property (blinking accepted, dancing refused), each boots its own terminal, a program loaded into the advanced one left the other two unchanged, the readout names the block and position it read, all three recipes crafted in a table with their ingredients consumed while the advanced pattern with a stone instead of gold made nothing, each block broke and dropped exactly one of itself, a stone block answered that there is no computer, an unregistered id was refused, a powered-off computer ran nothing through a load and ten ticks before power-on ran the loaded program, a computer facing north called peripheral.call('right','getType'), getNames('right'), echo and add on the harness block beside it through computercraft:peripheral and printed computercraft:harness, add echo, hi and 5 while the same calls on a plain stone neighbour and on the air above printed nil and a method the harness does not have raised an error, and a computer placed by hand from two different yaws faced the player both times"

@@ -6,15 +6,78 @@ nightly **`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** / mixins
 **`e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**. Raw logs:
 `../_shared/evidence/computercraft/`, game legs
 `../_shared/evidence/computercraft-e2e/`. Every log line is stamped with the
-package sha256 and size it ran against (**47,938 B**, sha256
-`e364023e7be61bcc142f79ea7084aaa7b07f935ebb2c118a9fe517e764304c3d`).
+package sha256 and size it ran against.
 
-The pin moved from `0b14f8a` (the migration's pin) to `0a875da` for slice 2.
-`[native] horizon` was updated **and** `.horizon/sdk` deleted and re-fetched, so
-the build used the new surface (`SDK 0a875da … in ./.horizon/sdk`);
-`HANDOVER` §9d.17a is the trap this avoids.
+**Current package: 0.2.3 — 59,985 B, sha256
+`0eab52fc8434915257eb5c74c1a9d853c41d429311f85139c4ac49fb5fcfdfe2`.**
+Sections 1–4 below are the **0.2.2 record** (47,938 B,
+`e364023e…`, 56 tests, 44 entries), kept as written; section 0 is this slice.
 
-## 1. The port's own crate (`cargo`)
+## 0. Slice 3 (0.2.3) — the peripheral surface
+
+```
+$ cargo fmt --check                                              # sdk-fmt.log
+fmt_exit=0
+
+$ cargo clippy --all-targets --offline -- -D warnings             # sdk-clippy.log
+clippy_exit=0
+
+$ cargo test --offline                                            # sdk-test.log
+test result: ok. 77 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test_exit=0
+```
+
+77 tests = 43 `runtime` (31 before + 12 for calls-as-expressions and the three
+peripheral builtins) + 9 `peripheral` (the side geometry, the key, the probe) +
+14 `commands` (13 + `run <pos> <program>`) + 7 `screen` + 4 `family`. **Red
+first** — the new tests were written against `todo!()` bodies and the run showed
+`test result: FAILED. 57 passed; 17 failed`, each with
+`not yet implemented: …` (`../_shared/evidence/computercraft/red-0.2.3-peripheral.log`).
+
+```
+$ cargo horizon-mod build                                         # two runs, cmp
+SDK 0a875da (build 0a875da91dbb0fdcb7ba8c42c11341aa229af51a) in ./.horizon/sdk
+Built ./target/horizon-mod/computercraft.hmod
+0eab52fc8434915257eb5c74c1a9d853c41d429311f85139c4ac49fb5fcfdfe2  (both builds, cmp identical)
+
+$ cargo horizon-mod check computercraft.hmod                      # sdk-check.log
+computercraft 0.2.3 (native-mod, format native-1/0a875da91…/e59da909…, for 26.3)
+  59985 bytes, SHA-256 0eab52fc8434915257eb5c74c1a9d853c41d429311f85139c4ac49fb5fcfdfe2, unsigned
+check_exit=0
+
+$ cargo horizon-mod fits computercraft.hmod --build 0a875da       # sdk-fits.log
+CC: Tweaked:
+0a875da  made for
+fits_exit=0
+
+$ cargo horizon-mod fits computercraft.hmod --build 0b14f8a       # sdk-fits-other.log
+CC: Tweaked:
+0b14f8a  fits
+fits_exit=0
+```
+
+51 entries, **no packed `Cargo.lock`**. The game legs (launcher build logged
+`Compiling computercraft (1 of 1)` at 0.2.3, so the binary carries this package):
+
+| leg | log | verdict |
+|---|---|---|
+| modded | `computercraft-e2e/e2e-launcher.log` | `PASS` + `EXIT:0` |
+| control (`GAME=$CONTROL_GAME`) | `e2e-launcher-control.log` | `FAIL: the package did not provide computercraft:computer_normal` + `EXIT:1` |
+| `SELFTEST=1` (the slice's pair) | `e2e-launcher-selftest.log` | `FAIL: peripheral.call('right','getType'): expected [nil], got [computercraft:ha\|rness]` + `EXIT:1` |
+| `SELFTEST=2` (recipes) | `e2e-launcher-selftest2.log` | `FAIL: selftest: the correct pattern made a result…` + `EXIT:1` |
+| `SELFTEST=3` (slice 2's terminal) | `e2e-launcher-selftest3.log` | `FAIL: selftest advanced terminal…` + `EXIT:1` |
+
+`python3 ports/tools/check-e2e-logs.py computercraft-e2e --strict` →
+`logs=5 ok=5 missing-exit=0 bad-exit=0`. `verify-sdk-package.py computercraft` →
+**1/1** (`verify-sdk-package.log`: package, `runtime.rs` byte-identical, no lock,
+77 tests, clippy 0, check, fits, skills gate).
+
+One harness change is recorded: the leg's scratch home now honours `E2E_TMP`
+(`~/.cache/...`) instead of `/tmp/opencode`, because the 7.5 GB `/tmp` tmpfs hit
+100 % mid-run on 2026-11-21 and the game exited **3** with `No space left on
+device` before opening its socket (two legs lost; the log shows `EXIT:3`).
+
+## 1. The port's own crate (`cargo`) — the 0.2.2 record
 
 ```
 $ cargo fmt --check                                              # sdk-fmt.log
