@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "GGG",
+    "GCG",
+    "GPG"
+  ],
+  "key": {
+    "G": "minecraft:gold_ingot",
+    "C": "minecraft:command_block",
+    "P": "minecraft:glass_pane"
+  },
+  "result": {
+    "id": "computercraft:computer_command",
+    "count": 1
+  }
+}

@@ -1,11 +1,12 @@
-//! CC: Tweaked for Horizon — the Computer block, its block entity, the terminal it draws
+//! CC: Tweaked for Horizon — the computer block family, its block entity, the terminal it draws
 //! and the four `/computercraft` usages.
 //!
 //! CC: Tweaked's computer is a Lua 5.2 machine (`data/computercraft/lua/bios.lua` and a ROM
 //! of 104 files). The port runs a documented **subset**, kept in [`runtime`] with its tests;
-//! [`commands`] owns the command surface and the JSON readout, [`screen`] the geometry of
-//! the drawn terminal. This file is the glue: one `BlockEntityPart` for the computer and one
-//! `impl Hooks` for the registration and the commands.
+//! [`commands`] owns the command surface and the JSON readout, [`family`] the three blocks that
+//! are computers, [`screen`] the geometry of the drawn terminal. This file is the glue: one
+//! `BlockEntityPart` for the computers and one `impl Hooks` for the registration and the
+//! commands.
 //!
 //! What each part of the old bundle became, and what the pinned API cannot express, is in
 //! `notes.md` §"Migration to the SDK format".
@@ -17,12 +18,12 @@ use mod_api::{
 };
 
 pub mod commands;
+pub mod family;
 pub mod runtime;
 pub mod screen;
 
-/// The one block this slice registers (`data/horizon/block/computer_normal.json`).
-pub const BLOCK: &str = "computercraft:computer_normal";
-/// Its block entity's type, declared in code: the client sees this id, as it did upstream.
+/// The computer's block entity's type, declared in code: the client sees this id, as it did
+/// upstream. One type covers the whole family (`family::PATHS`).
 pub const ENTITY: &str = "computercraft:computer";
 /// The program a fresh computer runs: there is no ROM in this slice, so it reports the
 /// version the ROM's `os.version()` answers and how to load one
@@ -131,7 +132,10 @@ impl BlockPart for ComputerPart {
         host: &dyn LevelHost,
         event: &mut StateForPlacementEvent<'_>,
     ) -> Option<Option<BlockState>> {
-        if host.state_block(event.state) != Some(BLOCK) {
+        if host
+            .state_block(event.state)
+            .is_none_or(|block| !family::is_computer(block))
+        {
             return None;
         }
         let facing = runtime::facing_for_placement(event.context.yaw);
@@ -231,12 +235,12 @@ struct Mod;
 
 #[mod_api::horizon_mod]
 impl Hooks for Mod {
-    /// Once, at startup: declare the computer's block entity type over the content block and
+    /// Once, at startup: declare the computers' block entity type over the whole family and
     /// attach the Part to it.
     fn register(&self, r: &mut dyn Registrar, _context: &RegistrationContext) {
         let kind = r
             .block_entity_type("computer")
-            .blocks(&["computer_normal"])
+            .blocks(&family::PATHS)
             .build();
         r.block_entity_part(&kind, ComputerPart)
             .expect("computercraft: the computer Part attaches to the type declared beside it");
@@ -249,18 +253,9 @@ impl Hooks for Mod {
         _host: &mut dyn ServerHost,
         event: &mut mod_api::RegisterCommandsEvent<'_>,
     ) {
-        event.commands.push(Command::new(
-            "computercraft load <pos:block_pos> <program:text>",
-        ));
-        event
-            .commands
-            .push(Command::new("computercraft run <pos:block_pos>"));
-        event
-            .commands
-            .push(Command::new("computercraft screen <pos:block_pos>"));
-        event.commands.push(Command::new(
-            "computercraft power <pos:block_pos> <switch:word>",
-        ));
+        for (usage, level) in commands::usages() {
+            event.commands.push(Command::op(usage, level));
+        }
     }
 
     /// A player ran one of our usages: the server parsed it, so the arguments are typed and
@@ -319,7 +314,7 @@ fn act(
     at: [i32; 3],
     action: commands::Action,
 ) {
-    let Some(entity) = computer_at(host, dimension, at) else {
+    let Some((block, entity)) = computer_at(host, dimension, at) else {
         let _ = host.commands().feedback(Text::literal(format!(
             "No computer at {},{},{}.",
             at[0], at[1], at[2]
@@ -334,9 +329,13 @@ fn act(
     };
     let mut computer = Computer::read(&data);
     let answer = match &action {
-        commands::Action::Screen => {
-            commands::screen_json(at, computer.powered, computer.running, &computer.buffer)
-        }
+        commands::Action::Screen => commands::screen_json(
+            &block,
+            at,
+            computer.powered,
+            computer.running,
+            &computer.buffer,
+        ),
         commands::Action::Load { program } => {
             computer.program.clone_from(program);
             computer.buffer.clear();
@@ -374,18 +373,20 @@ fn act(
     let _ = host.commands().feedback(Text::literal(answer));
 }
 
-/// The computer at `at`, when the block there is ours: a vanilla block entity or another
-/// mod's is refused before its data is read.
+/// The computer at `at`, with the block it is: a vanilla block entity or another mod's is
+/// refused before its data is read.
 fn computer_at(
     host: &mut dyn ServerHost,
     dimension: mod_api::DimensionKey,
     at: [i32; 3],
-) -> Option<mod_api::BlockEntityRef> {
+) -> Option<(String, mod_api::BlockEntityRef)> {
     let name = dimension.id(host)?;
     let level = host.level(&name)?;
     let block = level.block(host, at)?;
-    if block.id(host) != BLOCK {
+    let id = block.id(host).to_string();
+    if !family::is_computer(&id) {
         return None;
     }
-    host.block_entity(level, at)
+    let entity = host.block_entity(level, at)?;
+    Some((id, entity))
 }

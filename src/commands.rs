@@ -41,6 +41,30 @@ pub const LOAD_USAGE: &str = "Usage: /computercraft load <x> <y> <z> <program>";
 /// The usage line `/computercraft power` answers for a switch that is neither on nor off.
 pub const POWER_USAGE: &str = "Usage: /computercraft power <x> <y> <z> on|off";
 
+/// The operator level every usage is registered at. The four commands act on a
+/// computer by coordinates with no ownership or reach rule of their own (a
+/// computer has no owner record and a console source has no position), so they
+/// are gamemaster tools, as `/data` is: a player cannot power-cycle or read
+/// another player's computer through them.
+pub const OPERATOR_LEVEL: u8 = 2;
+
+/// The four usages and the level each is registered at.
+#[must_use]
+pub fn usages() -> [(&'static str, u8); 4] {
+    [
+        (
+            "computercraft load <pos:block_pos> <program:text>",
+            OPERATOR_LEVEL,
+        ),
+        ("computercraft run <pos:block_pos>", OPERATOR_LEVEL),
+        ("computercraft screen <pos:block_pos>", OPERATOR_LEVEL),
+        (
+            "computercraft power <pos:block_pos> <switch:word>",
+            OPERATOR_LEVEL,
+        ),
+    ]
+}
+
 /// The subcommand and the arguments the dispatcher parsed, read as an [`Asked`].
 ///
 /// `program` is the `load` usage's greedy `text` argument and `switch` the `power` usage's
@@ -71,11 +95,22 @@ pub fn asked(sub: &str, program: Option<&str>, switch: Option<&str>) -> Asked {
 /// {"block":"computercraft:computer_normal","pos":[1,2,3],"powered":true,"running":true,"lines":["2"]}
 /// ```
 ///
+/// `block` is the block that was actually read: the family has three members, so a readout that
+/// names one of them for all three would answer for a computer that is not there.
+///
 /// Written by hand rather than through a JSON crate: the port's only dependency is the
 /// pinned API, so the escaping is ours and is tested.
 #[must_use]
-pub fn screen_json(at: [i32; 3], powered: bool, running: bool, lines: &[String]) -> String {
-    let mut out = String::from("{\"block\":\"computercraft:computer_normal\",\"pos\":[");
+pub fn screen_json(
+    block: &str,
+    at: [i32; 3],
+    powered: bool,
+    running: bool,
+    lines: &[String],
+) -> String {
+    let mut out = String::from("{\"block\":\"");
+    escape_into(&mut out, block);
+    out.push_str("\",\"pos\":[");
     out.push_str(&at[0].to_string());
     out.push(',');
     out.push_str(&at[1].to_string());
@@ -182,10 +217,30 @@ mod tests {
     }
 
     #[test]
+    fn every_usage_acts_on_a_computer_by_coordinates_and_is_operator_only() {
+        // A level-0 usage would let any player read, reprogram or power a computer
+        // at any loaded position: there is no owner or reach check inside the
+        // handlers, so the gate is the registration level.
+        assert_eq!(OPERATOR_LEVEL, 2);
+        let usages = usages();
+        assert_eq!(usages.len(), 4);
+        for (usage, level) in usages {
+            assert_eq!(level, OPERATOR_LEVEL, "{usage}");
+            assert!(usage.starts_with("computercraft "), "{usage}");
+        }
+    }
+
+    #[test]
     fn the_readout_is_the_json_the_e2e_parses() {
         let lines = vec!["1+1".to_owned(), "2".to_owned()];
         assert_eq!(
-            screen_json([10, 64, -3], true, true, &lines),
+            screen_json(
+                "computercraft:computer_normal",
+                [10, 64, -3],
+                true,
+                true,
+                &lines
+            ),
             "{\"block\":\"computercraft:computer_normal\",\"pos\":[10,64,-3],\
              \"powered\":true,\"running\":true,\"lines\":[\"1+1\",\"2\"]}"
         );
@@ -194,16 +249,45 @@ mod tests {
     #[test]
     fn a_powered_off_computer_reports_an_empty_terminal() {
         assert_eq!(
-            screen_json([0, 0, 0], false, false, &[]),
+            screen_json(
+                "computercraft:computer_normal",
+                [0, 0, 0],
+                false,
+                false,
+                &[]
+            ),
             "{\"block\":\"computercraft:computer_normal\",\"pos\":[0,0,0],\
              \"powered\":false,\"running\":false,\"lines\":[]}"
         );
     }
 
     #[test]
+    fn the_readout_names_the_block_it_read() {
+        // The family has three members: a readout that always said `computer_normal` would be
+        // answering for a computer that is not at that position.
+        for block in [
+            "computercraft:computer_advanced",
+            "computercraft:computer_command",
+        ] {
+            let json = screen_json(block, [4, 64, 4], true, true, &[]);
+            assert!(
+                json.contains(&format!("\"block\":\"{block}\",")),
+                "got {json}"
+            );
+            assert!(!json.contains("computer_normal"), "got {json}");
+        }
+    }
+
+    #[test]
     fn a_line_with_quotes_and_backslashes_stays_one_json_string() {
         let lines = vec!["say \"hi\" \\ bye".to_owned()];
-        let json = screen_json([1, 2, 3], true, true, &lines);
+        let json = screen_json(
+            "computercraft:computer_normal",
+            [1, 2, 3],
+            true,
+            true,
+            &lines,
+        );
         assert!(
             json.ends_with("\"lines\":[\"say \\\"hi\\\" \\\\ bye\"]}"),
             "got {json}"
@@ -215,7 +299,13 @@ mod tests {
 
     #[test]
     fn a_control_character_is_escaped_as_an_escape_not_written_raw() {
-        let json = screen_json([0, 0, 0], true, true, &["a\tb\u{7f}".to_owned()]);
+        let json = screen_json(
+            "computercraft:computer_normal",
+            [0, 0, 0],
+            true,
+            true,
+            &["a\tb\u{7f}".to_owned()],
+        );
         assert!(json.contains("\"a\\tb\\u007f\""), "got {json}");
     }
 }

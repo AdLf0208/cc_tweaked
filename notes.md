@@ -3,14 +3,15 @@
 Ported from **CC: Tweaked 1.21.1-forge-1.121.0** (`cc-tweaked/CC-Tweaked`),
 Minecraft Java 1.21.1 NeoForge, **content / `deep`**, core, priority P0.
 
-**Format: the flat SDK package (mod API `0.2`), version `0.2.0`.** The retired
+**Format: the flat SDK package (mod API `0.2`), version `0.2.2`.** The retired
 `.hnmod` bundle (0.1.0, submitted as **PR #788**) was closed in the format purge
 (Horizon retired `.hnmod`, #17992). The code mod is now one `computercraft.hmod`
 carrying `horizon-mod.toml` + `Cargo.toml` + `src/` + `assets/` + `data/`,
 compiled by the launcher against **Horizon nightly
-`0b14f8acfd97fa2c750e42795249dcc981178ca4`** (2026-11-18) and **mixins
+`0a875da91dbb0fdcb7ba8c42c11341aa229af51a`** (2026-11-20) and **mixins
 `e59da9094f0c2fdda6c627fe9eff22dec6a906f0`**. `runtime.rs` is the old file
-byte for byte.
+byte for byte. Version history: `0.2.0` the migration, `0.2.1` the review fixes,
+**`0.2.2` slice 2 — the computer block family** (§"Slice 2" below).
 
 ## Licence — CCPL-1.0, rank 1 (copyleft-style), publishable under the same licence
 
@@ -42,7 +43,7 @@ The brief's ladder, worked in order, with the measurements:
 |---|---|---|
 | **(A) real Lua** (`piccolo`, pure-Rust VM) | **refused by the retired planner** | `retired-hnmod/…` in `../_shared/evidence/computercraft/`: `E_CRATE_DEPENDENCY: computercraft needs piccolo ^0.3, which isn't in Horizon's Cargo.lock` (exit 1); the old pin's lock had **0** Lua packages in **565**, for the injected module. The VM itself built in a scratch crate (`ladder-a-piccolo-standalone.log`) |
 | | **re-openable at the SDK** | the SDK's own `Cargo.toml` comment says *"Any other registry dependency must be pinned with `horizon-launcher native-lock .` before building"* — a launcher tool that did not exist at the old pin. So a real Lua VM is no longer blocked by the lock, only by a dependency decision + a slice; that is a **later slice**, not this migration (see Gaps) |
-| **(B) documented Lua subset** | **implemented and unchanged by the migration** | `src/runtime.rs`: lexer, precedence-climbing parser and evaluator, **31 unit tests**, byte-identical to the `.hnmod` version (`sha256 7f9465ab…74d2be`) |
+| **(B) documented Lua subset** | **implemented and unchanged by the migration** | `src/runtime.rs`: lexer, precedence-climbing parser and evaluator, **31 unit tests**, byte-identical to the `.hnmod` version at the migration (`sha256 7f9465ab…74d2be`; 0.2.1 added the `MAX_STRING_BYTES` budget, now `sha256 e11eebb6…a017`, and its test) |
 | **(C) neither** | not reached | the readout below makes the output observable, so a computer that does something could be shipped |
 
 ## The slice boundary
@@ -81,7 +82,7 @@ One block, one program, one observable:
 | `mixins/computercraft/horizon-mixin.toml` (plan, 9 injections) | **gone**: hooks are methods of one `impl Hooks` / one `impl BlockEntityPart` |
 | `mixins/computercraft/{block_entity,block_entity_ticks,…}.rs` (8 helpers) | **gone**: the same bodies are the Part's methods in `src/lib.rs` |
 | `mixins/computercraft/support.rs` (13,668 B glue) | `src/lib.rs` (the Part + `Hooks` + the NBT record) — ~15 KB, no per-hook split |
-| `mixins/computercraft/runtime.rs` (46,546 B) | **`src/runtime.rs`, byte-identical** (`sha256 7f9465aba8b94b4c7480a3d0d655bec200726401bd90dbd058d20617a874d2be`) |
+| `mixins/computercraft/runtime.rs` (46,546 B) | **`src/runtime.rs`, byte-identical** at the migration (`sha256 7f9465aba8b94b4c7480a3d0d655bec200726401bd90dbd058d20617a874d2be`). **From 0.2.1 it is `sha256 e11eebb6af48ba51b118ee23c638a8b837f96cccafc2a348b4d135d7e160a017`**: the review's `MAX_STRING_BYTES` budget (one constant, one guard, one test) is the only change since, and the file's logic is otherwise the 0.1.0 file |
 | `mixins/computercraft/data/computercraft-content.hmod` + `embedded_content.rs` (AE2 pattern) | **gone**: `assets/` and `data/` sit beside `src/` in the one package; no embedding and no `content_root` hook |
 | `content/horizon-mod.toml` (id/version 0.1.0) | **one** `horizon-mod.toml` (`api = "0.2"`, `capabilities = ["registries"]`, version **0.2.0**) |
 | — | `src/commands.rs` + `src/screen.rs`: the pure logic the migration *added* (below) |
@@ -234,7 +235,9 @@ tick and in all four commands. The two screenshots are the proof.
 | Runtime limit | a **step budget** (`RUN_STEP_LIMIT` = 100 000) stops a program with `error: … too long running …` | "Too long without yielding" after a configurable wall-clock time, with coroutines to yield |
 | Boot program | a port-owned three-line program (`CraftOS 1.9`, `no ROM: see`, `/computercraft`) | `bios.lua` → `shell.lua` prompt |
 | Computer power | `/computercraft power … on\|off` is a port diagnostic (also the e2e's broken-computer control) | no such command; a computer needs no fuel |
-| Block template numbers | the stone template's hardness/resistance/sounds | upstream's `ComputerBlock` properties (Java, not read) |
+| Block template numbers | the stone template's hardness/resistance/sounds, for all three computers | upstream's `ComputerBlock` properties (Java, not read) |
+| The three computers' terminals | one terminal and one ink for all three: the advanced computer's colour palette and the command computer's `commands.exec` are not modelled | the advanced terminal prints in colour and a command computer runs commands from Lua |
+| The command computer's recipe | gold ingots around `minecraft:command_block` (26.3 has no `c:` tags) | the same shape with the `c:ingots/gold` tag |
 | Loot | self-drop with `survives_explosion` | the jar's table is gated on `computercraft:block_named` / `has_id` / `player_creative`, three custom conditions 26.3 does not have (recorded gap: a named/ID'd computer keeps its label upstream) |
 | Recipe | stone ×7 + `minecraft:redstone` + `minecraft:glass_pane` | the same shape with `c:dusts/redstone` and `c:glass_panes` (26.3 ships no `c:` tags) |
 | `state=blinking` | shares the lit model; never set by the code | the server's blink phase when a computer is idle-but-busy |
@@ -263,9 +266,16 @@ recorded above, not by reproducing a broken behaviour.
   disk drives and floppies, printers, speakers, the lectern, cables
   (`cable`/`wired_modem_full`), the redstone relay, pocket computers, turtles,
   `gps`, `http`, `peripheral`/`os.pullEvent`.
-- **Block behaviour**: `computer_advanced`, `computer_command`, the other 15
-  blockstates; the blinking animation; the computer's GUI/menu (the pin does
-  have `BlockEntityPart::screen`/`screen_draw`, so a menu is now expressible);
+- **Block behaviour — the three computers are DONE (slice 2, 0.2.2).** What is
+  left of this bullet: the jar's **other thirteen block types** (16 blockstates
+  hold three computers; the rest are `disk_drive`, `lectern`,
+  `monitor_normal|advanced`, `printer`, `redstone_relay`, `speaker`,
+  `turtle_normal|advanced`, `cable`, `wired_modem_full`,
+  `wireless_modem_normal|advanced`); the **blinking animation** (the state is
+  carried and proven to be accepted/refused, but nothing sets it); the
+  computer's **GUI/menu** (the pin does have
+  `BlockEntityPart::screen`/`screen_draw`, and a *content menu type* is the
+  route — a block entity's own menu opens with zero slots in single player);
   the terminal's cursor, colours and `term.setTextColour`; the computer's real
   loot conditions; `computercraft:*` component types (a computer keeps its ID).
 - **A `BlockState`'s property read**: the pin reads a *position's* property and
@@ -273,27 +283,166 @@ recorded above, not by reproducing a broken behaviour.
   it was handed. `screen::facing_of` parses the state string instead. Issue
   shape: *"Read a `BlockState`'s property in a hook without a world lookup
   (`native_block_state_property`, which the retired API had)."*
-- **Placement**: the facing rule is unit-tested (`facing_for_placement`) and
-  wired through `state_for_placement`, but no in-game run yet places a computer
-  by hand and reads its facing back.
-- **The in-game legs**: `tools/e2e.sh` and `tools/visual.sh` are rewritten for
-  the SDK layout and stop at `missing GAME` here, because
-  `horizon-launcher` is not installed on this box; until a
-  `horizon-launcher native-build` run exists, the behaviour claims of this
-  migration rest on the compile + 49 unit tests, not on a `ctl` transcript.
+- **Placement — DONE in slice 2.** A computer is now placed **by hand**
+  (`ctl place`) from two yaws and its facing read back (north at yaw 0, east at
+  yaw 90), which is the `state_for_placement` block moment in game.
+- **The in-game legs**: `tools/e2e.sh` now runs on a launcher-built game and is
+  green (`../_shared/evidence/computercraft-e2e/`: `PASS` + `EXIT:0`, control
+  `EXIT:1`, `SELFTEST=1` `EXIT:1`, `--strict` 3/3). `tools/visual.sh` (the
+  screenshot leg) is still written for the `.hnmod` build and was **not**
+  re-run: the two screenshots in the evidence folder are from 0.1.0.
+
+## Review fixes (2026-11-18) — registry review #1166
+
+| Finding | Fix | Test / proof |
+|---|---|---|
+| `src/lib.rs:252` — the four level-0 usages read, reprogram or power-cycle any loaded computer by coordinates | all four are registered with `Command::op(usage, 2)` through `commands::usages()`, so they are gamemaster tools as `/data` is; the handlers keep their own block guard | `commands::tests::every_usage_acts_on_a_computer_by_coordinates_and_is_operator_only`; the e2e makes its player an operator through the console |
+| `src/runtime.rs:1198` — `..` allocates without a byte or memory budget | `MAX_STRING_BYTES` (64 KiB) bounds every built string and the joined `print` line; the interpreter stops with `string is too long …` before the step cap can be reached | `runtime::tests::a_program_cannot_grow_one_string_without_a_byte_budget` (watched failing first) |
+| the four carried textures are CCPL, whose section 7 forbids reuse "in other games" | the textures are now **generated** by `tools/gen_textures.py` from its documented palette; `--check` re-renders and compares byte for byte, and `LICENSE-NOTICE.md` records that no upstream pixel is carried | `python3 tools/gen_textures.py --check` exit 0 |
+| `authors` credited only the port | the shipped manifest credits Daniel Ratcliffe, Aaron Mills, SquidDev and AdLf0208; the registry entry's authors/description are the orchestrator's (entry-level) | `unzip -p computercraft.hmod horizon-mod.toml` |
+
+The two licence bullets are the reviewer's entry-level items: the **entry** licence
+(`CCPL-1.0.0`) and the missing `icons/computercraft.png` are the orchestrator's, and the
+package's own `authors` were already upstream-complete. The asset carry was a package
+problem and is fixed above.
+
+**Found while proving the leg:** the scratch e2e line that made the harness player an
+operator was removed — this pin has no `/op @a` (the command's argument is a game profile
+name, and the single-player owner is already level 4 as the level-2 usages prove). **Ladder:**
+51 tests, clippy `-D warnings` 0, `fmt --check` clean, two builds byte-identical, `check` and
+`fits` exit 0; `launcher-game.sh run computercraft` → `PASS` + `E2E EXIT:0`, the same command
+with `GAME=$CONTROL_GAME` → `FAIL: the package did not provide computercraft:computer_normal`
++ `EXIT:1` (`../_shared/evidence/computercraft-e2e/`).
+
+Package 0.2.1: **39,283 B**, SHA-256 `a92fc5ff2338dd3530049360b84b41f68eec37b40fbd3333a29b0058b3ecf4ff`;
+a second build is byte-identical (`cmp`), `check` and `fits` exit 0.
+
+## Slice 2 (0.2.2) — the computer block family
+
+**The gap line it comes from** (`## Gaps`, "Block behaviour"): *"`computer_advanced`,
+`computer_command`, the other 15 blockstates; the blinking animation; the computer's GUI/menu; …"*.
+The jar ships **16 blockstates for 16 blocks**; three of them are computers, and slice 1 registered
+one. This slice is the whole computer family: the two missing computers as full members.
+
+**Why it fits the tier and needs no Lua runtime.** The block entity, the tick, the terminal, the
+renderer and the four commands already existed; the family asks *which blocks carry them*. The
+Lua-VM gaps (the ROM, the language, the peripherals) are untouched, and nothing here invents a
+substitute interpreter. `family.rs` is the one new pure module; `commands::screen_json` gained the
+block it read (it hardcoded `computer_normal`, which would have answered for a computer that is
+not there).
+
+**What it adds** (`data/` and `assets/` per block, all four files of the jar's own shape):
+
+| Area | 0.2.1 | 0.2.2 |
+|---|---|---|
+| Blocks | `computer_normal` | + `computer_advanced`, `computer_command` (same 12-state blockstate: `facing` × `state`) |
+| Block entity | one type over `computer_normal` | one type over `family::PATHS` (all three) |
+| Textures | 4, generated | **10**, generated — each computer's own case palette (advanced gold, command purple) |
+| Recipes | stone + redstone + pane | + gold + redstone + pane, and gold + **command block** + pane |
+| Loot | self-drop | three self-drop tables (same 26.3 shape) |
+| Readout | always named `computer_normal` | names the block it read (`commands::screen_json(block, …)`) |
+| Commands | guard `block.id == BLOCK` | guard `family::is_computer` — the commands act on any of the three |
+
+**Red first (verbatim, `../_shared/evidence/computercraft/red-0.2.2-family-readout.log`).** The two
+new pure rules were written with `todo!()` bodies, then:
+
+```
+---- commands::tests::the_readout_names_the_block_it_read stdout ----
+thread 'commands::tests::the_readout_names_the_block_it_read' (1868575) panicked at src/commands.rs:111:5:
+not yet implemented: the readout names the block it read
+---- family::tests::another_block_is_not_a_member stdout ----
+thread 'family::tests::another_block_is_not_a_member' (1868577) panicked at src/family.rs:27:5:
+not yet implemented: the family predicate
+---- family::tests::the_two_spellings_line_up stdout ----
+thread 'family::tests::the_two_spellings_line_up' (1868579) panicked at src/family.rs:33:5:
+not yet implemented: the family predicate
+test result: FAILED. 47 passed; 9 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+```
+
+Green: **56 tests** (31 `runtime` byte-identical, 12 `commands`, 7 `screen`, 6 `family`), clippy
+`-D warnings` 0, `fmt --check` clean.
+
+**Trap checked before the content was written (the `constructionstick` class):** a carried recipe
+whose 3×3 grid resolves to a **vanilla 26.3** recipe is shadowed and uncraftable. Every shaped
+vanilla recipe in the prepared 26.3 `data/` was resolved to its item grid and compared with all
+three computer grids — **0 collisions** (3782 recipe files). The legs then craft all three anyway.
+
+**In game** (`../_shared/evidence/computercraft-e2e/e2e-launcher.log`, `--offscreen`, The End arena
+at x=200 on a stone floor, one SDK package at `0a875da`):
+
+```
+  placed computercraft:computer_normal: computercraft:computer_normal[facing=south,state=on]
+  placed computercraft:computer_advanced: computercraft:computer_advanced[facing=south,state=on]
+  placed computercraft:computer_command: computercraft:computer_command[facing=south,state=on]
+  state=blinking accepted: Changed the block at 209, 101, 0
+  state=dancing refused: ...uth,state=dancing]<--[HERE] | Block computercraft:computer_normal does not accept 'dancing' for state property
+  normal boot terminal: CraftOS 1.9|no ROM: see|/computercraft
+  advanced boot terminal: CraftOS 1.9|no ROM: see|/computercraft
+  command boot terminal: CraftOS 1.9|no ROM: see|/computercraft
+  advanced after its own program: 4
+  normal unchanged by the advanced load: CraftOS 1.9|no ROM: see|/computercraft
+  command unchanged by the advanced load: CraftOS 1.9|no ROM: see|/computercraft
+  readout at 200,0 names computercraft:computer_normal
+  readout at 203,0 names computercraft:computer_advanced
+  readout at 206,0 names computercraft:computer_command
+  normal -> {"count": 1, "item": "computercraft:computer_normal", "slot": 200}
+  advanced -> {"count": 1, "item": "computercraft:computer_advanced", "slot": 200}
+  command -> {"count": 1, "item": "computercraft:computer_command", "slot": 200}
+  the wrong pattern with stone in place of gold made nothing
+  computercraft:computer_normal: broke; 0 on the ground, 1 picked up
+  computercraft:computer_advanced: broke; 0 on the ground, 1 picked up
+  computercraft:computer_command: broke; 0 on the ground, 1 picked up
+  a stone block answers: No computer at 209,101,0. | Changed the block at 209, 101, 0
+  an unregistered id is refused
+  computercraft:computer_advanced hand-placed facing north
+  computercraft:computer_command hand-placed facing east
+PASS: … (+ EXIT:0)
+```
+
+The last two lines close the old "Placement" gap: `/setblock` never runs a block moment, so the
+item was **placed by hand** (`ctl place`) from two different yaws and the facing read back —
+north from yaw 0, east from yaw 90, the two rows of `runtime::facing_for_placement`'s own table. That
+is also what exercises the changed `state_for_placement` guard (it now accepts all three blocks).
+The two negative legs: `GAME=$CONTROL_GAME` → `FAIL: the package did not provide
+computercraft:computer_normal` + `EXIT:1`; `SELFTEST=1` → `FAIL: selftest advanced terminal …` +
+`EXIT:1`. `check-e2e-logs.py computercraft-e2e --strict` → `logs=3 ok=3`.
+
+**Coverage of the jar's computer family**
+
+| family | state | how |
+|---|---|---|
+| `computer_normal` block + item + blockstate (12 states) | **tested** | placed, state read back, `blinking` accepted / `dancing` refused, hand-placed facing |
+| `computer_advanced` block + item + blockstate | **tested** | same, plus its own terminal and its own recipe |
+| `computer_command` block + item + blockstate | **tested** | same, plus power-off/power-on |
+| the three recipes | **tested** | crafted in a real table, output id + count, ingredients consumed, a wrong ingredient makes nothing |
+| the three loot tables | **tested** | each block mined in survival, exactly one dropped |
+| the terminal (boot, `print`, loop, concat) | **tested** | `/computercraft screen` parsed with `jq` |
+| the advanced computer's **colour terminal** | **not ported** | needs the Lua `term` palette (the VM gap) |
+| the command computer's **command API** (`commands.exec`) | **not ported** | planned; needs the VM and an op-permission bridge |
+| the `blinking` **animation** (blink phase) | **not ported** | the state exists (accept/refuse proven) but the code never sets it: upstream blinks when idle-but-busy, which the subset scheduler does not model |
+| the other 13 block types (monitor, disk drive, turtle, cable, modem, printer, speaker, lectern, relay) | **not ported** | each is its own family; see `## Gaps` |
+| the GUI/menu | **not ported** | `BlockEntityPart::screen` exists at the pin, but a block entity's own menu opens with zero slots in single player (`HANDOVER` §9d.21); a content menu type would be the route |
+
+**Delivered package 0.2.2:** **47,938 B**, SHA-256
+`e364023e7be61bcc142f79ea7084aaa7b07f935ebb2c118a9fe517e764304c3d`, 44 entries, no packed
+`Cargo.lock`; two builds `cmp`-identical.
 
 ## Verification (evidence in `../_shared/evidence/computercraft/`)
 
+All at the pin `0a875da91dbb0fdcb7ba8c42c11341aa229af51a` / mixins `e59da909…`, package 0.2.2
+(**47,938 B**, sha256 `e364023e…4c3d`), every log stamped with that sha and size.
+
 | Step | Command | Result |
 |---|---|---|
-| Format | `cargo fmt --check` | **exit 0** (`fmt.log`) |
-| Lints | `cargo clippy --all-targets --offline -- -D warnings` | **exit 0**, 0 warnings (`clippy.log`) |
-| Unit tests | `cargo test --offline` | **49 passed; 0 failed** (`unit-tests.log`): 31 `runtime` (byte-identical file) + 18 new (`commands` 11, `screen` 7); TDD: the 18 failed with `not yet implemented` first |
-| Package | `cargo horizon-mod build` | **exit 0**, `SDK 0b14f8a … Built ./target/horizon-mod/computercraft.hmod` (`build.log`) |
-| Registry check | `cargo horizon-mod check computercraft.hmod` | **exit 0**: `computercraft 0.2.0 (native-mod, format native-1/0b14f8ac…/e59da909…, for 26.3)`, 40 694 bytes, sha256 `830d815e…7d5d`, unsigned (`check.log`) |
-| Fits | `cargo horizon-mod fits computercraft.hmod` | **exit 0**: `CC: Tweaked: 0b14f8a  made for` (`fits.log`) |
-| Reproducibility | `cargo horizon-mod build` twice | **identical bytes** (`cmp`), same sha256 (`package.log`) |
-| In-game (`e2e.sh`, `visual.sh`) | needs `horizon-launcher native-build` | **not run here**: `horizon-launcher` is not installed; the scripts now stop at `missing GAME` instead of running an unmodified game |
+| Format | `cargo fmt --check` | **exit 0** (`sdk-fmt.log`) |
+| Lints | `cargo clippy --all-targets --offline -- -D warnings` | **exit 0**, 0 warnings (`sdk-clippy.log`) |
+| Unit tests | `cargo test --offline` | **56 passed; 0 failed** (`sdk-test.log`): 31 `runtime` (`sha256 e11eebb6…a017`, the 0.1.0 file plus 0.2.1's byte budget) + 12 `commands` + 7 `screen` + 6 `family`; TDD: the 6 new tests (and the 4 readout tests the signature change touched) failed with `not yet implemented` first (`red-0.2.2-family-readout.log`) |
+| Package | `cargo horizon-mod build` | **exit 0**, `SDK 0a875da … Built ./target/horizon-mod/computercraft.hmod`; **two builds `cmp`-identical** |
+| Registry check | `cargo horizon-mod check computercraft.hmod` | **exit 0**: `computercraft 0.2.2 (native-mod, format native-1/0a875da91…/e59da909…, for 26.3)`, 47 938 bytes, sha256 `e364023e…4c3d`, unsigned (`sdk-check.log`) |
+| Fits (pin) | `cargo horizon-mod fits computercraft.hmod --build 0a875da` | **exit 0**: `CC: Tweaked: 0a875da  made for` (`sdk-fits.log`) — a tautology, kept as the record |
+| Fits (other build) | `cargo horizon-mod fits computercraft.hmod --build 0b14f8a` | **exit 0**: `CC: Tweaked: 0b14f8a  fits` (`sdk-fits-other.log`) — the real gate |
+| Package verifier | `python3 ports/tools/verify-sdk-package.py computercraft` | **1/1**: package, `runtime.rs` byte-identical in the archive, no packed `Cargo.lock` (44 entries), tests, clippy, check, fits, skills gate |
+| In game | `ports/tools/launcher-game.sh build computercraft` + a leased `tools/e2e.sh` | **PASS + EXIT:0** (`computercraft-e2e/e2e-launcher.log`); control `GAME=$CONTROL_GAME` **FAIL + EXIT:1**; `SELFTEST=1` **FAIL + EXIT:1**; `check-e2e-logs.py computercraft-e2e --strict` → **logs=3 ok=3** |
 
 Retired-format evidence (kept, still valid for the `.hnmod` build it describes;
 the old crate's own `unit-tests.log` was replaced by this migration's run):
@@ -301,17 +450,22 @@ the old crate's own `unit-tests.log` was replaced by this migration's run):
 `e2e-selftest.log`, `visual.log` and the two screenshots, plus the whole old
 tree in `retired-hnmod/` (see `../_shared/evidence/computercraft/README.md`).
 
-Deliverable: **`computercraft.hmod`** (40,694 B, 24 entries, SHA-256
-`830d815ef6cedb1786df671d7e00080ec65a05f3a78d5e636acc68d12daf7d5d`) holding
-`horizon-mod.toml`, `Cargo.toml`, `Cargo.lock`, `LICENSE`,
-`LICENSE-NOTICE.md`, `README.md`, `uses.json`, `assets/computercraft/**` (9
-files), `data/computercraft/**` (4 files) and `src/{lib,runtime,commands,screen}.rs`.
+Deliverable: **`computercraft.hmod`** (47,938 B, 44 entries, SHA-256
+`e364023e7be61bcc142f79ea7084aaa7b07f935ebb2c118a9fe517e764304c3d`) holding
+`horizon-mod.toml`, `Cargo.toml`, `LICENSE`, `LICENSE-NOTICE.md`, `README.md`,
+`uses.json`, `assets/computercraft/**` (23 files, 10 of them generated textures),
+`data/computercraft/**` (10 files) and
+`src/{lib,family,runtime,commands,screen}.rs`. No `Cargo.lock` is packed.
 
 ### Changelog for the resubmission (supersedes #788)
 
-> Supersedes #788, closed because Horizon retired `.hnmod` (#17992). Changes:
-> flat SDK package with `api = "0.2"` and `[native]` pinned to `0b14f8a`; hooks
-> rewritten as `impl mod_api::Hooks` methods against typed hosts/events (8 hooks
-> mapped, 0 recorded as gaps); `runtime.rs` and its tests unchanged.
+> Supersedes #788, closed because Horizon retired `.hnmod` (#17992), and 0.2.1
+> (PR #1166). Changes in 0.2.2: the jar's other two computers
+> (`computer_advanced`, `computer_command`) as full members — blocks, 12-state
+> blockstates, generated textures and models, item models, recipes, loot tables,
+> creative-tab entries — over one block entity type covering the family; the
+> `/computercraft screen` readout now names the block it read; the family guard
+> accepts all three so the commands act on any computer. `runtime.rs` and its 31
+> tests are unchanged. Now pinned to `0a875da` / `e59da90`.
 
 Skills: superpowers/using-superpowers,brainstorming,writing-plans,test-driven-development,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices,rust-port

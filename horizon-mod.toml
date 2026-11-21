@@ -1,20 +1,20 @@
-# CC: Tweaked for Horizon — the computer block, its block entity, the terminal it draws
-# and the four `/computercraft` usages. One flat package: this manifest is the mod's only
-# identity, `src/` is compiled by the launcher against the game build [native] pins, and
-# `assets/` + `data/` are the carried content.
+# CC: Tweaked for Horizon — the three computer blocks, the one block entity they share, the
+# terminal each draws and the four `/computercraft` usages. One flat package: this manifest is
+# the mod's only identity, `src/` is compiled by the launcher against the game build [native]
+# pins, and `assets/` + `data/` are the carried content.
 id = "computercraft"
 name = "CC: Tweaked"
-# 0.2.0 is the SDK-format version: it supersedes the retired `.hnmod` 0.1.0 (PR #788,
-# closed because Horizon retired `.hnmod`). The registry entry, the file name and the
-# release must agree.
-version = "0.2.0"
-description = """A port of CC: Tweaked for Horizon: the Computer block and a terminal it draws
-on its front face. The computer's block entity keeps a program and a 16-column, 10-row
-terminal in its saved data, boots the program once when it is powered, and answers four
-server commands (`/computercraft load|run|screen|power`) that load a program, run it again,
-read the terminal back as one JSON line, and switch the computer on or off. The program
-language is a documented Lua 5.2 subset (no tables, functions or coroutines yet); the ROM,
-peripherals, turtles and the other block variants are recorded gaps."""
+# 0.2.0 was the SDK-format migration (superseding the retired `.hnmod` 0.1.0, PR #788, closed
+# because Horizon retired `.hnmod`); 0.2.1 was the registry review's fixes and 0.2.2 is the
+# computer block family. The registry entry, the file name and the release must agree.
+version = "0.2.2"
+description = """A port of CC: Tweaked for Horizon: the three computer blocks (Computer, Advanced Computer
+and Command Computer) and the terminal each draws on its front face. A computer's block entity keeps
+a program and a 16-column, 10-row terminal in its saved data, boots the program once when it is
+powered, and answers four server commands (`/computercraft load|run|screen|power`) that load a
+program, run it again, read the terminal back as one JSON line naming the block it read, and switch
+the computer on or off. The program language is a documented Lua 5.2 subset (no tables, functions or
+coroutines yet); the ROM, peripherals, turtles and the other thirteen block types are recorded gaps."""
 authors = ["Daniel Ratcliffe", "Aaron Mills", "SquidDev", "AdLf0208"]
 # The upstream licence, read in full from the jar's manifest URL and carried verbatim as
 # LICENSE; LICENSE-NOTICE.md records where every notice was read. Copyleft-style, rank 1:
@@ -22,11 +22,11 @@ authors = ["Daniel Ratcliffe", "Aaron Mills", "SquidDev", "AdLf0208"]
 # campaign maintainer approves publishing.
 api = "0.2"
 side = "both"
-# registries: "May add blocks, items, mob effects and entity types to your worlds" — the
-# computer block and its block entity type.
+# registries: "May add blocks, items, mob effects and entity types to your worlds" — the three
+# computer blocks and the block entity type they share.
 capabilities = ["registries"]
 
 [native]
 game = "26.3"
-horizon = "0b14f8acfd97fa2c750e42795249dcc981178ca4"
+horizon = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
 mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"

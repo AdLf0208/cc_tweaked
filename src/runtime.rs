@@ -16,6 +16,13 @@ use std::collections::BTreeMap;
 /// is a step count instead of a wall-clock timer (documented deviation).
 pub const RUN_STEP_LIMIT: u32 = 100_000;
 
+/// The biggest a string the subset builds may grow to. CC's computer memory
+/// (`ComputerCraft.computerSpaceLimit`) bounds a whole computer, not one string;
+/// a one-block terminal has no use for a megabyte of `..`, so this slice bounds
+/// each built string at 64 KiB. Without it `s = s .. s` doubles in memory until
+/// the step cap is reached, and the interpreter runs on the server tick.
+pub const MAX_STRING_BYTES: usize = 64 * 1024;
+
 /// The terminal the block screen shows: 16 columns of 6-px glyphs across the
 /// face and 10 rows of 9-px lines (upstream's basic terminal is 51x19; a
 /// one-block screen is smaller, so the stored buffer is smaller too).
@@ -1108,6 +1115,12 @@ impl Machine<'_> {
                 .map(Value::to_text)
                 .collect::<Vec<_>>()
                 .join("\t");
+            if line.len() > MAX_STRING_BYTES {
+                return Err(LuaError::runtime(
+                    self.line,
+                    format!("string is too long (the subset stops at {MAX_STRING_BYTES} bytes)"),
+                ));
+            }
             self.terminal.write_line(&line);
             return Ok(());
         }
@@ -1195,7 +1208,21 @@ impl Machine<'_> {
                     _ => None,
                 };
                 match (text(&left), text(&right)) {
-                    (Some(left), Some(right)) => Ok(Value::Str(left + &right)),
+                    (Some(left), Some(right)) => {
+                        // The step cap bounds how often this runs, not how much it
+                        // allocates: a doubling program would reach a gigabyte long
+                        // before its 100 000th step.
+                        let joined = left.len().saturating_add(right.len());
+                        if joined > MAX_STRING_BYTES {
+                            return Err(LuaError::runtime(
+                                self.line,
+                                format!(
+                                    "string is too long (the subset stops at {MAX_STRING_BYTES} bytes)"
+                                ),
+                            ));
+                        }
+                        Ok(Value::Str(left + &right))
+                    }
                     _ => {
                         let bad = if text(&left).is_none() { &left } else { &right };
                         Err(LuaError::runtime(
@@ -1414,6 +1441,18 @@ mod tests {
         let error = err("while true do end");
         assert!(
             matches!(&error, LuaError::Runtime { message, .. } if message.contains("too long running")),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn a_program_cannot_grow_one_string_without_a_byte_budget() {
+        // Twenty doublings would be 1 MiB of `s`. The step cap does not bound the
+        // allocation, so the string budget is what has to refuse it.
+        let error =
+            err("local s = \"x\" local n = 0 while n < 20 do s = s .. s n = n + 1 end print(s)");
+        assert!(
+            matches!(&error, LuaError::Runtime { message, .. } if message.contains("too long")),
             "unexpected error: {error}"
         );
     }

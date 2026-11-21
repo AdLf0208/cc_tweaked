@@ -1,41 +1,44 @@
 #!/usr/bin/env bash
-# In-game check for CC: Tweaked (SDK format, slice 1).
+# In-game check for CC: Tweaked (SDK format, slice 2: the computer block family).
 #
-# The claim: a placed `computercraft:computer_normal` runs a program and its
-# terminal is observable. The readout is the port's own command,
-# `/computercraft screen <x> <y> <z>`, which answers one line of JSON with the
-# terminal's lines (the block also *draws* them on its front face, but a
-# headless run has no renderer: `tools/visual.sh` is the screenshot leg).
+# The claim: the jar's three computers — `computer_normal`, `computer_advanced` and
+# `computer_command` — are all real blocks in game; each carries its own terminal,
+# each is craftable from its own recipe, each drops itself, and the port's readout
+# names the block it actually read.
 #
-# Since the SDK migration (2026-11-18) the code mod is one flat `.hmod` the
-# launcher compiles into the game, so GAME must name a game the launcher built
-# with it:
-#   horizon-launcher native-build ports/computercraft --instance <instance> --trust-native-code
-# and then `GAME=<that horizon-client> tools/e2e.sh`. There is no `--dev-mod`
-# route any more: a content-only dev mod cannot carry the block entity, the
-# tick, the screen or the commands. Without a launcher-built game the script
-# stops with "missing horizon-client" rather than running an unmodified game,
-# which is the intended behaviour (that is how imfast's leg reports too).
+# The readout is the port's own command, `/computercraft screen <x> <y> <z>`, which
+# answers one line of JSON with the block it read and the terminal's lines (the
+# block also *draws* them on its front face; `tools/visual.sh` is the screenshot
+# leg).
 #
-# The control binary is the shared one at the campaign pin (protocol-compatible
-# with the nightly the mod is built for; only *content* is unshared).
+# Since the SDK migration the code mod is one flat `.hmod` the launcher compiles
+# into the game, so GAME must name a launcher-built game:
+#   ports/tools/launcher-game.sh build computercraft
+#   eval "$(ports/tools/launcher-game.sh env computercraft)"
+#   bash tools/e2e.sh
+# Without one the script stops with "missing GAME" rather than running an
+# unmodified game.
 #
 # Legs
-#   default        the modded game: the scenario below, all assertions true
-#   SELFTEST=1     the same setup with two assertions inverted (the boot
-#                  terminal and `print(1+1)`): the run must fail, proving the
-#                  check can fail
+#   default        the modded game: every phase below, all assertions true
+#   SELFTEST=1     the same setup with two assertions inverted (the advanced
+#                  computer's terminal and a crafted result): the run must fail,
+#                  proving the check can fail
+#   GAME=$CONTROL_GAME   the same Nightly without the package: the first
+#                  assertion (the item exists) fails, which is the differential
+#                  that the ids come from this package
 #
 # The scenario, in The End on a stone floor (an empty level: no ambient items):
-#   1. the block places with the state the setblock asked for, and the item exists
-#   2. its default program boots and the terminal shows the two boot lines
-#   3. `/computercraft load … print(1+1)` then `screen` gives "2"
-#   4. a loop and a concatenation give "item 1|item 2|item 3"
-#   5. the block's `state` reads `on` while it runs
-#   6. CONTROL: `/computercraft power … off` empties the terminal and the same
-#      program on the powered-off computer prints nothing; powering it back on
-#      runs it again
-#   7. CONTROL: `/computercraft screen` on a stone block says there is no computer
+#   A  the three items exist and the three blocks place with the state asked for,
+#      and `state=dancing` is refused where `state=blinking` is accepted
+#   B  each computer boots its own terminal; a program loaded into the advanced
+#      computer leaves the normal and command terminals unchanged (differential)
+#   C  the readout names the block it read, for all three
+#   D  all three recipes craft in a crafting table with the ingredients consumed,
+#      and the advanced recipe with a stone in place of a gold ingot makes nothing
+#   E  each block breaks and drops one of itself (the 26.3 loot dialect)
+#   F  CONTROLS: a stone block is not a computer; a powered-off computer runs
+#      nothing through a load and ten ticks; powering it back on runs the program
 set -euo pipefail
 
 CLONE=/home/adlf/Desktop/all_the_mods_10_rust_rewrite
@@ -47,20 +50,30 @@ RES=${RES:-${HORIZON_RES:-/home/adlf/Desktop/horizon/.local/horizon-client/26.3}
 SOCK=${SOCK:-/tmp/opencode/computercraft-e2e.sock}
 SELFTEST=${SELFTEST:-0}
 WORLD=${WORLD:-CCE2E}
-BLOCK=computercraft:computer_normal
-X=2; Y=64; Z=2        # the computer
-CX=5; CZ=2            # a stone block, the "no computer here" control
+NORMAL=computercraft:computer_normal
+ADVANCED=computercraft:computer_advanced
+COMMAND=computercraft:computer_command
+# The arena: the End's void, far from the central island (a fill at 0,0 lands inside it).
+X0=200
+FLOOR=$((X0 - 4))
+X=$X0; Y=101; Z=0       # the normal computer
+AX=203; AZ=0            # the advanced computer
+CX=206; CZ=0            # the command computer
+SX=209; SZ=0            # a stone block, the "no computer here" control
+TABLE_X=200; TABLE_Z=4  # the crafting table
+LOT_X=197; LOT_Z=0      # where a block is placed, broken and counted
+LOT_PX=196              # where the player stands to break it
 
 [ -x "$CTL" ] || { echo "missing horizon-ctl: $CTL" >&2; exit 1; }
 [ -n "$GAME" ] || {
     echo "missing GAME: the SDK-format mod is compiled into the game by the launcher;" >&2
-    echo "  horizon-launcher native-build $PORT --instance <instance> --trust-native-code" >&2
-    echo "  then GAME=<that horizon-client> $0" >&2
+    echo "  ports/tools/launcher-game.sh build computercraft" >&2
+    echo "  eval \"\$(ports/tools/launcher-game.sh env computercraft)\"; bash tools/e2e.sh" >&2
     exit 1
 }
 [ -x "$GAME" ] || { echo "missing horizon-client: $GAME" >&2; exit 1; }
 [ -d "$RES/assets" ] || { echo "missing prepared resources: $RES" >&2; exit 1; }
-[ -f "$PORT/computercraft.hmod" ] || { echo "missing package: $PORT/computercraft.hmod" >&2; exit 1; }
+command -v jq >/dev/null || { echo "missing jq (every assertion parses a ctl reply)" >&2; exit 1; }
 
 SCRATCH=$(mktemp -d /tmp/opencode/computercraft-home.XXXXXX)
 export HORIZON_HOME=$SCRATCH/game
@@ -74,7 +87,7 @@ rm -f "$SOCK"
 cd "$SCRATCH"
 
 ctl() { "$CTL" --socket "$SOCK" "$@"; }
-fail() { echo "FAIL: $*" >&2; exit 1; }
+fail() { echo "FAIL: $*" >&2; ctl logs --lines 40 >&2 || true; exit 1; }
 
 cleanup() {
     local status=$?
@@ -87,119 +100,237 @@ cleanup() {
 trap cleanup EXIT
 
 launch() {
-    local world=${1:-$WORLD}
+    local world=${1:-$WORLD} game=${2:-$GAME}
     rm -f "$SOCK"
-    # No --dev-mod: the block, its block entity, the tick, the screen and the
-    # commands are all compiled in from the one `.hmod`.
-    "$CTL" --socket "$SOCK" launch --game "$GAME" --world "$world" --seed 20261104 \
-        --creative --headless --wait --resources "$RES" >"$SCRATCH/game-console.log" 2>&1
-    ctl wait-ready 120
-    ctl wait 10
-    ctl command "execute in minecraft:the_end run tp @s 0.5 64 0.5" >/dev/null
-    ctl wait 5
-    ctl command "execute in minecraft:the_end run fill -8 63 -8 8 63 8 minecraft:stone" >/dev/null
-    ctl command "execute in minecraft:the_end run tp @s 0.5 64 0.5" >/dev/null
-    ctl wait 10
-    ctl command "kill @e[type=minecraft:enderman]" >/dev/null 2>&1 || true
-    ctl wait 3
+    # No --dev-mod: the blocks, their block entity, the tick, the screen and the
+    # commands are all compiled in from the one `.hmod`. `--offscreen`, not
+    # `--headless`: the recipe phase opens a crafting-table menu and clicks its
+    # slots, and a headless client never opens a screen.
+    "$CTL" --socket "$SOCK" launch --game "$game" --world "$world" --seed 20261104 \
+        --creative --offscreen --wait --resources "$RES" >"$SCRATCH/game-console.log" 2>&1
+    ctl wait-ready 120 >/dev/null
+    ctl wait 20 >/dev/null
+    # Teleport first so the chunks the fills touch are loaded: a player over the void falls.
+    ctl command "execute in minecraft:the_end run tp @s $X0.5 104 0.5" >/dev/null
+    local loaded=false
+    for _ in $(seq 1 60); do
+        ctl wait 5 >/dev/null
+        if [ "$(ctl block "$X0" 100 0 | jq -r '.loaded // false')" = true ]             || [ "$(ctl block "$X0" 100 0 | jq -r '.name // empty')" = "minecraft:end_stone" ]; then
+            loaded=true
+            break
+        fi
+    done
+    ctl command "execute in minecraft:the_end run fill $FLOOR 100 -8 $((X0 + 14)) 100 8 minecraft:stone" >/dev/null
+    ctl wait 6 >/dev/null
+    ctl command "execute in minecraft:the_end run fill $FLOOR 101 -8 $((X0 + 14)) 108 8 minecraft:air" >/dev/null
+    ctl wait 6 >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $X0.5 101 0.5" >/dev/null
+    ctl wait 10 >/dev/null
+    ctl command "execute in minecraft:the_end run kill @e[type=!player]" >/dev/null 2>&1 || true
+    ctl wait 5 >/dev/null
+    floor=$(block_state "$X0" 100 0)
+    [ "$floor" = "minecraft:stone" ] || fail "the arena floor is not stone (got '$floor')"
+    echo "  arena: stone floor at y=100, computers at y=$Y, loaded=$loaded"
 }
 
 # The terminal the server keeps, as the port's command reports it.
-screen() {
-    ctl chat "/computercraft screen $1 $2 $3" >/dev/null
+screen() { # screen X Z — the computers all sit at $Y
+    ctl chat "/computercraft screen $1 $Y $2" >/dev/null
     ctl wait 2 >/dev/null
     ctl messages 4 | jq -r '.chat[0]'
 }
 screen_lines() { screen "$@" | jq -r '.lines | join("|")'; }
 screen_field() { local field=$1; shift; screen "$@" | jq -r ".$field"; }
 # `ctl block` answers `block` (the name) and `state` (name plus properties).
-block_state() { ctl block "$1" "$2" "$3" | jq -r '.state // "unknown"'; }
+block_state() { ctl block "$1" "$2" "$3" | jq -r '.state // .name // "unknown"'; }
 # A command's own answer (the reply the mod gives through `Commands::feedback`).
 reply() {
     ctl chat "$1" >/dev/null
     ctl wait 2 >/dev/null
     ctl messages 4 | jq -r '.chat[0]'
 }
-load_program() {
-    ctl chat "/computercraft load $X $Y $Z $1" >/dev/null
+# The newest N chat lines joined into one string: a vanilla command's refusal is two lines (the
+# message, then a pointer to the bad argument), and `messages` answers newest first.
+reply_lines() { # reply_lines N command
+    ctl chat "$2" >/dev/null
+    ctl wait 2 >/dev/null
+    ctl messages 8 | jq -r --argjson n "$1" '.chat[0:$n] | join(" | ")'
+}
+load_program() { # load_program X Z program
+    ctl chat "/computercraft load $1 $Y $2 $3" >/dev/null
     ctl wait 4 >/dev/null
 }
-expect_lines() {
-    local expected=$1 what=$2 got
-    got=$(screen_lines "$X" "$Y" "$Z")
-    [ "$got" = "$expected" ] || fail "$what: expected [$expected], got [$got] ($(screen "$X" "$Y" "$Z"))"
+expect_lines() { # expect_lines X Z expected what
+    local x=$1 z=$2 expected=$3 what=$4 got
+    got=$(screen_lines "$x" "$z")
+    [ "$got" = "$expected" ] || fail "$what: expected [$expected], got [$got] ($(screen "$x" "$z"))"
     echo "  $what: $got"
 }
+# Place one computer of `block` at x/z, facing south, and read the state back.
+place_computer() { # place_computer BLOCK X Z
+    local block=$1 x=$2 z=$3 placed
+    ctl give "$block" 1 >/dev/null || fail "the package did not provide $block"
+    ctl command "execute in minecraft:the_end run setblock $x $Y $z ${block}[facing=south,state=off]" >/dev/null \
+        || fail "cannot place $block"
+    ctl wait 4 >/dev/null
+    placed=$(block_state "$x" "$Y" "$z")
+    case "$placed" in
+        "$block[facing=south,state=on]"|"$block[facing=south,state=off]") echo "  placed $block: $placed" ;;
+        *) fail "$block did not place (got $placed)" ;;
+    esac
+}
+item_count() { ctl inventory | jq -r --arg b "$1" '.counts[$b] // 0'; }
 
-echo "== launch (creative, The End arena, one SDK package) =="
+echo "== the package under test =="
+[ -f "$PORT/computercraft.hmod" ] || fail "missing package: $PORT/computercraft.hmod"
+echo "  $(cd "$PORT" && sha256sum computercraft.hmod)"
+echo "  $(stat -c '%s bytes' "$PORT/computercraft.hmod"), $(grep -m1 '^version' "$PORT/horizon-mod.toml")"
+echo "  game: $GAME ($(sha256sum "$GAME" | cut -d' ' -f1))"
+
+echo "== launch (creative, The End arena, one SDK package, offscreen) =="
 launch
 
-echo "== the item exists and the block places with the state asked for =="
-ctl give "$BLOCK" 1 >/dev/null || fail "the package did not provide $BLOCK"
-ctl wait 4 >/dev/null
-ctl chat "/clear @s" >/dev/null
-ctl command "execute in minecraft:the_end run setblock $X $Y $Z ${BLOCK}[facing=south,state=off]" >/dev/null \
-    || fail "cannot place the computer"
-ctl wait 4 >/dev/null
-placed=$(block_state "$X" "$Y" "$Z")
-case "$placed" in
-    "$BLOCK[facing=south,state=on]"|"$BLOCK[facing=south,state=off]") echo "  placed: $placed" ;;
-    *) fail "the computer did not place (got $placed)" ;;
+echo "== A: the three computers exist and place; the state enum is the jar's =="
+ctl command "clear @s" >/dev/null
+place_computer "$NORMAL" "$X" "$Z"
+place_computer "$ADVANCED" "$AX" "$AZ"
+place_computer "$COMMAND" "$CX" "$CZ"
+# The blockstate's `state` enum: `blinking` is a value, `dancing` is not. Both writes go
+# through the same command, so the acceptance and the refusal are a differential — and both
+# answers are the game's own parsed reply, not the presence or absence of an error.
+ok_reply=$(reply "/setblock $SX $Y $SZ ${NORMAL}[facing=south,state=blinking]")
+case "$ok_reply" in
+    "Changed the block"*) echo "  state=blinking accepted: $ok_reply" ;;
+    *) fail "state=blinking was refused on $NORMAL: $ok_reply" ;;
 esac
-[ "$(block_state "$CX" "$Y" "$CZ")" = "minecraft:air" ] || fail "the control cell is not air"
+bad_reply=$(reply_lines 2 "/setblock $SX $Y $SZ ${NORMAL}[facing=south,state=dancing]")
+case "$bad_reply" in
+    *"does not accept 'dancing'"*) echo "  state=dancing refused: $bad_reply" ;;
+    *) fail "state=dancing was not refused, so the state property is not the jar's: $bad_reply" ;;
+esac
+ctl command "execute in minecraft:the_end run setblock $SX $Y $SZ minecraft:air" >/dev/null
 
-echo "== its default program boots and the terminal shows it =="
-expect_lines "CraftOS 1.9|no ROM: see|/computercraft" "boot terminal"
-[ "$(screen_field running "$X" "$Y" "$Z")" = "true" ] || fail "the computer did not report that it ran"
-[ "$(screen_field block "$X" "$Y" "$Z")" = "$BLOCK" ] || fail "the screen reply names another block"
+echo "== B: each computer boots its own terminal =="
+expect_lines "$X" "$Z" "CraftOS 1.9|no ROM: see|/computercraft" "normal boot terminal"
+expect_lines "$AX" "$AZ" "CraftOS 1.9|no ROM: see|/computercraft" "advanced boot terminal"
+expect_lines "$CX" "$CZ" "CraftOS 1.9|no ROM: see|/computercraft" "command boot terminal"
+for pair in "$X:$Z" "$AX:$AZ" "$CX:$CZ"; do
+    [ "$(screen_field running "${pair%%:*}" "${pair##*:}")" = "true" ] \
+        || fail "the computer at ${pair%%:*},${pair##*:} did not report that it ran"
+done
 if [ "$SELFTEST" = 1 ]; then
-    echo "  selftest: asserting the boot terminal is something else (must FAIL)"
-    [ "$(screen_lines "$X" "$Y" "$Z")" = "selftest" ] || fail "selftest: the boot terminal is not 'selftest'"
+    echo "  selftest: asserting the advanced computer's terminal is 'selftest' (must FAIL)"
+    expect_lines "$AX" "$AZ" "selftest" "selftest advanced terminal"
 fi
 
-echo "== print(1+1) shows 2 =="
-load_program 'print(1+1)'
-if [ "$SELFTEST" = 1 ]; then
-    echo "  selftest: asserting print(1+1) answers 3 (must FAIL)"
-    expect_lines "3" "selftest arithmetic"
-else
-    expect_lines "2" "print(1+1)"
-fi
+echo "== B2: a program runs on one computer only (differential) =="
+load_program "$AX" "$AZ" 'print(2+2)'
+expect_lines "$AX" "$AZ" "4" "advanced after its own program"
+expect_lines "$X" "$Z" "CraftOS 1.9|no ROM: see|/computercraft" "normal unchanged by the advanced load"
+expect_lines "$CX" "$CZ" "CraftOS 1.9|no ROM: see|/computercraft" "command unchanged by the advanced load"
 
-echo "== a loop and a concatenation =="
-load_program 'local n=0 while n<3 do n=n+1 print("item " .. n) end'
-expect_lines "item 1|item 2|item 3" "loop and concatenation"
+echo "== C: the readout names the block it read =="
+readout_check() { # readout_check BLOCK X Z
+    local block=$1 x=$2 z=$3 got
+    got=$(screen_field block "$x" "$z")
+    [ "$got" = "$block" ] || fail "the readout at $x,$z names '$got', expected '$block'"
+    echo "  readout at $x,$z names $got"
+}
+readout_check "$NORMAL" "$X" "$Z"
+readout_check "$ADVANCED" "$AX" "$AZ"
+readout_check "$COMMAND" "$CX" "$CZ"
+# And the address is the one asked for, not a neighbour's.
+[ "$(screen "$AX" "$AZ" | jq -c '.pos')" = "[$AX,$Y,$AZ]" ] || fail "the advanced readout names another position"
 
-echo "== the block is lit while it has run =="
-lit=$(block_state "$X" "$Y" "$Z")
-[ "$lit" = "$BLOCK[facing=south,state=on]" ] || fail "the running computer's state is $lit"
-echo "  block state: $lit"
+echo "== D: all three recipes craft, and a wrong ingredient makes nothing =="
+python3 "$PORT/tools/craft_family.py" "$SOCK" "$CTL" "$TABLE_X" "$Y" "$TABLE_Z" \
+    || fail "the recipe phase failed"
+echo "  recipes PASS"
 
-echo "== control: a powered-off computer runs nothing =="
-ctl chat "/computercraft power $X $Y $Z off" >/dev/null
-ctl wait 4 >/dev/null
-[ "$(screen_field powered "$X" "$Y" "$Z")" = "false" ] || fail "the computer is not powered off"
-[ "$(screen_lines "$X" "$Y" "$Z")" = "" ] || fail "powering off left a terminal: $(screen_lines "$X" "$Y" "$Z")"
-before=$(block_state "$X" "$Y" "$Z")
-[ "$before" = "$BLOCK[facing=south,state=off]" ] || fail "the powered-off computer's state is $before"
-load_program 'print("broken")'
-expect_lines "" "the powered-off computer printed nothing"
-ctl wait 10 >/dev/null
-expect_lines "" "still nothing ten ticks later"
-echo "  powered off: $(screen "$X" "$Y" "$Z")"
+echo "== E: each block drops one of itself (the 26.3 loot dialect) =="
+loot_leg() { # loot_leg BLOCK -> sets DROPPED
+    local block=$1 placed
+    ctl command "execute in minecraft:the_end run tp @s $LOT_PX.5 $Y 0.5" >/dev/null
+    ctl command "clear @s" >/dev/null
+    ctl command "gamemode survival" >/dev/null
+    ctl wait 4 >/dev/null
+    ctl command "execute in minecraft:the_end run setblock $LOT_X $Y $LOT_Z ${block}[facing=north,state=off]" >/dev/null
+    ctl wait 4 >/dev/null
+    placed=$(block_state "$LOT_X" "$Y" "$LOT_Z")
+    case "$placed" in
+        "$block[facing=north,state=on]"|"$block[facing=north,state=off]") ;;
+        *) fail "the drop-test $block did not place (got $placed)" ;;
+    esac
+    ctl break "$LOT_X" "$Y" "$LOT_Z" >/dev/null
+    ctl wait 30 >/dev/null
+    [ "$(block_state "$LOT_X" "$Y" "$LOT_Z")" = "minecraft:air" ] \
+        || fail "the $block at $LOT_X,$Y,$LOT_Z did not break"
+    # The drop may still be lying there or already picked up: count both, and demand exactly one.
+    on_ground=$(ctl entities 8 item \
+        | jq --arg b "$block" '[.entities[] | select(.kind == "item" and .item.item == $b) | .item.count] | add // 0')
+    held=$(item_count "$block")
+    DROPPED=$((on_ground + held))
+    echo "  $block: broke; $on_ground on the ground, $held picked up"
+}
+for block in "$NORMAL" "$ADVANCED" "$COMMAND"; do
+    loot_leg "$block"
+    [ "$DROPPED" = 1 ] \
+        || fail "mining $block dropped $DROPPED of itself, expected the one its 26.3 loot table names"
+done
+ctl command "gamemode creative" >/dev/null
 
-echo "== control: a stone block is not a computer =="
-ctl command "execute in minecraft:the_end run setblock $CX $Y $CZ minecraft:stone" >/dev/null
+echo "== F: controls =="
+ctl command "execute in minecraft:the_end run setblock $SX $Y $SZ minecraft:stone" >/dev/null
 ctl wait 2 >/dev/null
-answer=$(reply "/computercraft screen $CX $Y $CZ")
+answer=$(reply_lines 2 "/computercraft screen $SX $Y $SZ")
 case "$answer" in
-    "No computer at"*) echo "  $answer" ;;
+    "No computer at"*) echo "  a stone block answers: $answer" ;;
     *) fail "a stone block answered the screen command: $answer" ;;
 esac
+# An id the jar has but this slice does not register is refused by the game.
+if ctl give computercraft:monitor_normal 1 >/dev/null 2>&1; then
+    fail "the game accepted computercraft:monitor_normal, which this slice does not register"
+fi
+ctl command "clear @s" >/dev/null
+echo "  an unregistered id is refused"
 
-echo "== powering it back on boots the loaded program =="
-ctl chat "/computercraft power $X $Y $Z on" >/dev/null
+echo "== F2: a powered-off computer runs nothing, and power-on runs the loaded program =="
+ctl chat "/computercraft power $CX $Y $CZ off" >/dev/null
+ctl wait 4 >/dev/null
+[ "$(screen_field powered "$CX" "$CZ")" = "false" ] || fail "the command computer is not powered off"
+[ "$(screen_lines "$CX" "$CZ")" = "" ] || fail "powering off left a terminal: $(screen_lines "$CX" "$CZ")"
+load_program "$CX" "$CZ" 'print("broken")'
+expect_lines "$CX" "$CZ" "" "the powered-off computer printed nothing"
+ctl wait 10 >/dev/null
+expect_lines "$CX" "$CZ" "" "still nothing ten ticks later"
+ctl chat "/computercraft power $CX $Y $CZ on" >/dev/null
 ctl wait 6 >/dev/null
-expect_lines "broken" "the loaded program ran after power-on"
+expect_lines "$CX" "$CZ" "broken" "the loaded program ran after power-on"
 
-echo "PASS: the computer placed, its default program booted to a readable terminal, print(1+1) answered 2, a loop and a concatenation answered item 1|item 2|item 3, the block read state=on while it ran, a powered-off computer ran nothing (its terminal stayed empty through a load and ten ticks), a stone block answered that there is no computer, and powering it back on ran the loaded program"
+echo "== G: a computer placed by hand faces the player (the block moment) =="
+# `state_for_placement` is a block moment, so `/setblock` never exercises it: the item has to be
+# placed by a player. The expected facing is `runtime::facing_for_placement`'s own table (yaw 0 =
+# looking south -> the block's front faces north, towards the player standing north of it).
+hand_place() { # hand_place BLOCK BX BZ PX PZ YAW WANT
+    local block=$1 bx=$2 bz=$3 px=$4 pz=$5 yaw=$6 want=$7 placed
+    ctl command "execute in minecraft:the_end run setblock $bx $Y $bz minecraft:air" >/dev/null
+    ctl command "execute in minecraft:the_end run tp @s $px $Y $pz" >/dev/null \
+        || fail "cannot teleport to $px,$Y,$pz"
+    ctl look "$yaw" 0 >/dev/null || fail "cannot look yaw $yaw"
+    ctl command "clear @s" >/dev/null
+    ctl wait 3 >/dev/null
+    ctl command "item replace entity @s hotbar.0 with $block 1" >/dev/null
+    ctl wait 3 >/dev/null
+    ctl place "$bx" "$Y" "$bz" --item "$block" >"$SCRATCH/place.log" 2>&1 \
+        || fail "ctl place of $block at $bx,$Y,$bz failed: $(cat "$SCRATCH/place.log")"
+    ctl wait 5 >/dev/null
+    placed=$(block_state "$bx" "$Y" "$bz")
+    case "$placed" in
+        "$block[facing=$want,state=on]"|"$block[facing=$want,state=off]") echo "  $block hand-placed facing $want" ;;
+        *) fail "a hand-placed $block is '$placed', expected facing=$want" ;;
+    esac
+}
+hand_place "$ADVANCED" 200 -2 200.5 -3.5 0 north
+hand_place "$COMMAND" 203 -2 204.5 -1.5 90 east
+
+echo "PASS: all three computers (normal, advanced, command) exist and place with the jar's state property (blinking accepted, dancing refused), each boots its own terminal, a program loaded into the advanced one left the other two unchanged, the readout names the block and position it read, all three recipes crafted in a table with their ingredients consumed while the advanced pattern with a stone instead of gold made nothing, each block broke and dropped exactly one of itself, a stone block answered that there is no computer, an unregistered id was refused, a powered-off computer ran nothing through a load and ten ticks before power-on ran the loaded program, and a computer placed by hand from two different yaws faced the player both times"
